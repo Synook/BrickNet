@@ -22,6 +22,9 @@ colliders, or meshes, run the hook by hand:
 - `render FILE OUTDIR`: Blender beauty shot, minutes; for final images only
 - `publish FILE GALLERY [--image IMG]`: add a finished model to the gallery with a preview and index
 
+Large, regular models (architecture): write a layout script and convert it with
+`python scripts/layout.py ../bricknet-models/<name>/layout.py` (see "Layout scripts" in the guide).
+
 ## Conventions
 
 - Models live in the private gallery repo `Synook/bricknet-models`, not here. Attach it (`add_repo`,

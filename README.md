@@ -133,6 +133,14 @@ python scripts/author.py render model.txt out/        # slow, photoreal Blender 
 python scripts/author.py publish model.txt ../bricknet-models --image out/model_0000.png  # add to the gallery
 ```
 
+For large, regular models such as buildings, `scripts/layout.py` turns a short layout script (parts
+placed on the stud grid, with helpers for walls, rings, and filled areas) into path text through
+bricknet's own connector finder:
+
+```bash
+python scripts/layout.py ../bricknet-models/<name>/layout.py   # writes model.txt beside it
+```
+
 Finished models live in a separate gallery repo, one folder per model with its path text and a preview;
 `publish` adds a model and regenerates the gallery's README index.
 
