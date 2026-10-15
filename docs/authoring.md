@@ -93,7 +93,12 @@ The script is plain Python with a `Layout` named `L` in scope (plus `TITLE`, `PR
   min corner; `center=True` puts its origin on the stud (leaves, round pieces, a 2×2 on one stud).
 - **`L.run`, `L.ring`, `L.fill`** lay 1-wide lines, rectangle perimeters (alternate `phase` per layer to
   interlock corners and joints), and filled areas (largest piece first; `holes=` leaves rectangles
-  out). `color` may be a function `(i, j, level) -> color`; pieces split where it changes.
+  out). `color` may be a function `(i, j, level) -> color`; pieces split where it changes, and studs it
+  maps to `None` stay empty (room for a walkway plate that crosses a wall, a tree among tiles).
+- **`L.outline(cells, ...)`, `L.area(cells, ...)`, `L.edge(cells)`** do the same for any footprint given
+  as a set of studs (set algebra makes holes and setbacks easy: `rect(...) - tower`). `outline` of a
+  rectangle is its `ring`. For curved corners, place quarter-round pieces with `L.add` and outline the
+  rest; work out each piece's `rot` from its stud cells rather than by eye.
 - **`L.section("...")`** labels what follows; labels become comments in the path text.
 
 Conversion finds every mated connector pair with bricknet's `parse_ldr` and attaches parts in authoring
@@ -107,7 +112,11 @@ first campus model:
 - Roofs: tiles alone cannot span a hollow building, so lay a plate fill, then tiles on top with
   `holes=` where rooftop structures need studs.
 - Trees and anything else on a sidewalk need studs: leave gaps in tile runs and stand the trunk on the
-  plinth.
+  plinth. Leaf plates overhang their stud, so give roof trees a trunk too, to lift the leaves clear of the
+  tiles around them.
+- Hollow glass walls: put an opaque core ring one stud inside each translucent layer (it reads as the
+  floor plates behind a curtain wall) and a slab across the interior on opaque layers; the slabs also
+  connect the core rings, which otherwise touch nothing.
 
 ## Path text essentials
 

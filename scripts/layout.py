@@ -93,6 +93,20 @@ def split(length, kind, phase=0):
     return out
 
 
+def _lines(cells, axis):
+    """Maximal straight runs (i, j, length) of a set of studs along axis "i" or "j"."""
+    out = []
+    for i, j in sorted(cells, key=lambda c: (c[1], c[0]) if axis == "i" else c):
+        prev = (i - 1, j) if axis == "i" else (i, j - 1)
+        if prev in cells:
+            continue
+        n = 1
+        while ((i + n, j) if axis == "i" else (i, j + n)) in cells:
+            n += 1
+        out.append((i, j, n))
+    return out
+
+
 class Layout:
     def __init__(self):
         self.parts = []  # (stem, color code, 4x4 matrix, section)
@@ -126,7 +140,8 @@ class Layout:
 
     def run(self, i, j, length, axis, level, kind, color, phase=0):
         """A 1-wide line of `kind` pieces from stud (i, j) along axis "i" or "j". `color` may be a function
-        of the stud (i, j), level -> color; pieces then split wherever the color changes."""
+        of the stud (i, j), level -> color; pieces then split wherever the color changes, and studs it maps
+        to None stay empty (to leave room for a part that crosses the line)."""
         cells = [(i + k, j) if axis == "i" else (i, j + k) for k in range(length)]
         colors = [color(ci, cj, level) if callable(color) else color for ci, cj in cells]
         pos = 0
@@ -134,6 +149,9 @@ class Layout:
             end = pos
             while end < length and colors[end] == colors[pos]:
                 end += 1
+            if colors[pos] is None:
+                pos = end
+                continue
             for n in split(end - pos, kind, phase if pos == 0 else 0):
                 name, rot = piece(kind, n, 1) if axis == "i" else piece(kind, 1, n)
                 ci, cj = cells[pos]
@@ -155,6 +173,41 @@ class Layout:
             self.run(i0, jj0, jj1 - jj0, "j", level, kind, color, p)
         if "e" in sides and jj1 > jj0:
             self.run(i1 - 1, jj0, jj1 - jj0, "j", level, kind, color, p)
+
+    @staticmethod
+    def edge(cells):
+        """The studs of a footprint (a set of (i, j)) with a side on its boundary."""
+        return {(i, j) for i, j in cells if not {(i - 1, j), (i + 1, j), (i, j - 1), (i, j + 1)} <= cells}
+
+    def outline(self, cells, level, kind, color, phase=0):
+        """The 1-wide boundary of any footprint, for walls around non-rectangular plans. Even phases lay the
+        rows first and odd phases the columns, as `ring` does (a rectangle's outline is its ring), so stacked
+        layers interlock."""
+        edge = self.edge(set(cells))
+        first, second = ("i", "j") if phase % 2 == 0 else ("j", "i")
+        singles = set()
+        for axis, pool in ((first, edge), (second, singles)):
+            for i, j, n in _lines(set(pool), axis):
+                if n == 1 and axis == first:
+                    singles.add((i, j))
+                else:
+                    self.run(i, j, n, axis, level, kind, color, 2 if phase % 2 else 0)
+
+    def area(self, cells, level, kind, color):
+        """Cover any set of studs with `kind` pieces: each row is cut into spans, and consecutive rows with
+        the same span are filled as one rectangle."""
+        cells = set(cells)
+        rects, open_ = [], {}  # span (i0, i1) -> (first row, last row)
+        for j in sorted({j for _, j in cells}) + [None]:
+            spans = set() if j is None else {(i, i + n) for i, _, n in _lines({c for c in cells if c[1] == j}, "i")}
+            for span, (first, last) in list(open_.items()):
+                if span not in spans or last != j - 1:
+                    rects.append((span[0], first, span[1], last + 1))
+                    del open_[span]
+            for span in spans:
+                open_[span] = (open_.get(span, (j, j))[0], j)
+        for r in rects:
+            self.fill(*r, level, kind, color)
 
     def fill(self, i0, j0, i1, j1, level, kind, color, holes=()):
         """Cover [i0, i1) x [j0, j1), minus `holes` (rectangles (i0, j0, i1, j1)), with `kind` pieces: the
