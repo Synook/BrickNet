@@ -15,6 +15,8 @@ export const PRESETS = {
 };
 
 const BACKGROUND = '#f2f2ef';
+// bricknet-render's GLBs store part geometry with z negated relative to LDraw part coordinates
+const GLB_TO_LDRAW = new THREE.Matrix4().makeScale(1, 1, -1);
 const GHOST = '#c8c8c8';
 const MARGIN = 1.12;
 const FOV = 30;
@@ -95,7 +97,7 @@ export class Viewer {
       const [x, y, z, a, b, c, d, e, f, g, h, i] = p.matrix;
       const obj = new THREE.Group();
       obj.matrixAutoUpdate = false;
-      obj.matrix.set(a, b, c, x, d, e, f, y, g, h, i, z, 0, 0, 0, 1);
+      obj.matrix.set(a, b, c, x, d, e, f, y, g, h, i, z, 0, 0, 0, 1).multiply(GLB_TO_LDRAW);
       const meshes = [], lines = [];
       for (const prim of prims) {
         const code = prim.code === 16 ? p.color : prim.code === 24 ? null : prim.code;
