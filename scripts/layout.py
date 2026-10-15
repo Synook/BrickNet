@@ -20,12 +20,14 @@ part sits on its level and rises by its own height (plate 1, brick 3). Footprint
 colliders, so parts are placed by their bounding rectangle, rotated by `rot` (0 or 90).
 
 Conversion: parse_ldr finds every mated connector pair; the tree then attaches parts in authoring order,
-each to its earliest-placed neighbor, so `section` labels become comments in the path text. Parts that
-touch nothing are reported, and the result should still go through `author.py check` for collisions.
+each to its earliest-placed neighbor, so `section` labels become comments in the path text. Optional parts
+(`with L.optional():`) that collide or touch nothing are dropped first; other parts that touch nothing are
+reported, and the result should still go through `author.py check` for collisions.
 """
 
 import math
 import sys
+from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
 
@@ -33,7 +35,7 @@ import numpy as np
 
 from bricknet import collision
 from bricknet.data import load_catalog
-from bricknet.graph import _adjacency, _build_tree, parse_ldr
+from bricknet.graph import _adjacency, _build_tree, decode_graph, parse_ldr, tree_to_graph
 from bricknet.tree import serialize_tree
 
 _LENGTHS = {
@@ -111,6 +113,8 @@ class Layout:
     def __init__(self):
         self.parts = []  # (stem, color code, 4x4 matrix, section)
         self.places = 0  # decimals kept in joint angles; 2 for parts at arbitrary angles (ball joints, hinges)
+        self.optional_parts = set()  # indices cull() may drop
+        self._optional = False
         self.sec = ""
         cat = load_catalog()
         self._cat = cat
@@ -120,6 +124,25 @@ class Layout:
 
     def color(self, c):
         return c if isinstance(c, int) else self._cat.color_to_code[c]
+
+    @contextmanager
+    def optional(self):
+        """Parts added inside `with L.optional():` are decoration (trees, plants, glazing): cull() drops any that
+        collide with another part or end up touching nothing connected to the root, instead of failing."""
+        prev, self._optional = self._optional, True
+        try:
+            yield
+        finally:
+            self._optional = prev
+
+    def place(self, name, color, matrix):
+        """Place `name` at an arbitrary 4x4 pose (LDU, -y up), for parts off the stud grid: ball-jointed links,
+        hinged panels. Set `places = 2` so their joint angles survive conversion."""
+        m = np.array(matrix, dtype=float)
+        self.parts.append((self._cat.id_to_stem[self._cat.name_to_id[name]], self.color(color), m, self.sec))
+        if self._optional:
+            self.optional_parts.add(len(self.parts) - 1)
+        return len(self.parts) - 1
 
     def add(self, name, color, i, j, level, rot=0, center=False):
         """Place `name` with its footprint's min corner at stud (i, j), bottom at `level`. With center=True
@@ -137,6 +160,8 @@ class Layout:
         m[:3, 3] = center - r @ np.array([cx, 0.0, cz])
         m[1, 3] = -8 * level - h
         self.parts.append((self._cat.id_to_stem[self._cat.name_to_id[name]], self.color(color), m, self.sec))
+        if self._optional:
+            self.optional_parts.add(len(self.parts) - 1)
         return len(self.parts) - 1
 
     def run(self, i, j, length, axis, level, kind, color, phase=0):
@@ -235,6 +260,43 @@ class Layout:
         self.fill(i0 + a, j0, i1, j0 + b, level, kind, color)
         self.fill(i0, j0 + b, i1, j1, level, kind, color)
 
+    def cull(self):
+        """Drop optional parts that collide with another part (the one in the most collisions first) or touch
+        nothing connected to the root. Collisions are tested at the poses the path text decodes to, so the
+        drift of a long chain of off-grid joints counts. Returns descriptions of the dropped parts; collisions
+        between required parts are left for `author.py check` to report."""
+        dropped, orig = [], list(range(len(self.parts)))
+        while self.optional_parts:
+            ids = [self._cat.stem_to_id[stem] for stem, *_ in self.parts]
+            pairs = collision.colliding_pairs(ids, self.converted()) or []
+            pairs = [(a, b) for a, b in pairs if a in self.optional_parts or b in self.optional_parts]
+            if not pairs:
+                break
+            drop = set()
+            while pairs:
+                count = {}
+                for a, b in pairs:
+                    for k in (a, b):
+                        if k in self.optional_parts:
+                            count[k] = count.get(k, 0) + 1
+                worst = max(count, key=lambda k: (count[k], k))
+                drop.add(worst)
+                pairs = [(a, b) for a, b in pairs if worst not in (a, b)]
+            dropped += self._remove(drop, orig)
+        loose = self._tree()[2]
+        return dropped + self._remove({k for k in loose if k in self.optional_parts}, orig)
+
+    def _remove(self, drop, orig):
+        """Remove parts by index, renumbering the rest and `orig` (their indices before culling); returns
+        descriptions of the removed parts, numbered by `orig`."""
+        out = [f"#{orig[k]}{d[d.index(' '):]}" for k, d in zip(sorted(drop), self.describe(sorted(drop)))]
+        keep = [k for k in range(len(self.parts)) if k not in drop]
+        orig[:] = [orig[k] for k in keep]
+        remap = {k: n for n, k in enumerate(keep)}
+        self.parts = [self.parts[k] for k in keep]
+        self.optional_parts = {remap[k] for k in self.optional_parts if k in remap}
+        return out
+
     def describe(self, indices):
         """'#k name at stud (i, j) level L (section)' for each part index: the stud under its origin."""
         cat, out = self._cat, []
@@ -253,8 +315,8 @@ class Layout:
             lines.append(f"1 {color} {nums} {stem}.dat")
         return "\n".join(lines) + "\n"
 
-    def to_path(self, root=0):
-        """(path text with section comments, indices of parts not connected to the root)."""
+    def _tree(self, root=0):
+        """(Tree, part index of each tree node, indices of parts not connected to the root)."""
         graph = parse_ldr(self.ldr())
         adj = _adjacency(graph.edges)
         placed, order, parent_of = {root}, [root], {}
@@ -272,7 +334,23 @@ class Layout:
             if len(rest) == len(pending):
                 break
             pending = rest
-        lines = serialize_tree(_build_tree(graph, order, parent_of, self.places)).split("\n")
+        return _build_tree(graph, order, parent_of, self.places), order, pending
+
+    def converted(self, root=0):
+        """Each part's pose as the path text decodes it, in layout coordinates (the authored pose for parts
+        not connected to the root)."""
+        tree, order, _ = self._tree(root)
+        mats = decode_graph(tree_to_graph(tree))
+        to_layout = self.parts[root][2] @ np.linalg.inv(mats[0])
+        out = [m for _, _, m, _ in self.parts]
+        for node, m in zip(order, mats):
+            out[node] = to_layout @ m
+        return out
+
+    def to_path(self, root=0):
+        """(path text with section comments, indices of parts not connected to the root)."""
+        tree, order, pending = self._tree(root)
+        lines = serialize_tree(tree).split("\n")
         chunks = [lines[:1]] + [lines[k : k + 2] for k in range(1, len(lines) - 1, 2)]
         out, last = [], None
         for node, chunk in zip(order, chunks):
@@ -290,6 +368,9 @@ def main():
     script = Path(sys.argv[1])
     env = {"L": Layout(), "TITLE": script.parent.name, "PROMPT": "", "NOTES": []}
     exec(compile(script.read_text(), str(script), "exec"), env)
+    dropped = env["L"].cull()
+    if dropped:
+        print(f"dropped {len(dropped)} optional parts:\n  " + "\n  ".join(dropped[:10]))
     text, loose = env["L"].to_path()
     header = [f"# {env['TITLE']}"] + ([f"# prompt: {env['PROMPT']}"] if env["PROMPT"] else [])
     header += [f"# {n}" for n in env["NOTES"]] + [f"# generated by BrickNet scripts/layout.py from {script.name}"]

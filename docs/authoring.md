@@ -100,8 +100,15 @@ The script is plain Python with a `Layout` named `L` in scope (plus `TITLE`, `PR
   rectangle is its `ring`. For curved corners, place quarter-round pieces with `L.add` and outline the
   rest; work out each piece's `rot` from its stud cells rather than by eye.
 - **`L.section("...")`** labels what follows; labels become comments in the path text.
-- **`L.places = 2`** keeps two decimals in joint angles when the script also places parts at arbitrary
-  angles (appending `(stem, color, matrix, section)` to `L.parts`); the default rounds to whole degrees.
+- **`L.place(name, color, matrix)`** puts a part at any 4x4 pose (LDU, −y up), off the grid: links,
+  hinged panels, anything computed. Set **`L.places = 2`** so joint angles keep two decimals in the path
+  text; the default rounds to whole degrees, which is too coarse for parts at arbitrary angles. Even two
+  decimals drift a little down a long chain of joints (up to about 1 LDU across a few hundred ball joints),
+  which mating tolerates; `L.converted()` returns the poses the path text will decode to.
+- **`with L.optional():`** marks decoration (trees, plants, glazing). Before converting, `L.cull()` (run
+  by `scripts/layout.py`) drops optional parts that collide with anything at their converted poses, the one
+  in the most collisions first, and optional parts left touching nothing, and lists them. Required parts are
+  never dropped; their collisions still show up in `check`.
 
 Conversion finds every mated connector pair with bricknet's `parse_ldr` and attaches parts in authoring
 order, each to its earliest-placed neighbor. It fails with a list of loose parts (`#k name at stud
@@ -179,6 +186,31 @@ radius 54): a `technic brick 1x2 with hole` under the chassis (socket along its 
 points outward), the wheel on the pin with `axle pin b socket a flip 0 0` (hub against the brick, rim
 dished outward). Axle height = wheel radius, so put the small wheels' blocks on extra plates (two
 plates, 16 LDU, for 70 vs 54) to keep the chassis level.
+
+**Ball-jointed frames** (geodesic domes, lattice shells): hubs with outward-pointing towballs, joined by
+`technic steering link 4l/6l type 1/8l/9l` (sockets 60/100/140/160 LDU apart). Measured with `check`:
+- Hubs: `technic rotor 3 blade x 0.5 liftarm` (3-way; pin holes 20 LDU out along each blade, cross holes at
+  40) and `technic beam propeller 5 blade 9 diameter with square hole` (5-way; holes at 40 and 60, crosses
+  at 80). Seat `technic pin towball with friction` with `axle socket X pin a regular 0 0` and
+  `technic axle towball` with `axle cross X axle a regular YAW -2`: either puts the ball 21 LDU above the hub
+  centre. A cross hole on an angled blade needs YAW turned to match it (rotor crosses a/d: 30/60;
+  propeller a/b/d/e: 18/36/54/72), or the axle collides.
+- A link lies across its ball, perpendicular to the towball's neck; end-on (along the neck) it collides.
+  Lying across, it may rise 32° off the hub plane and swing freely, but may only dip so far before the
+  blade below it gets in the way: −17° on a rotor's inner hole, −26° at a blade tip, about −3° and −8° on
+  the propeller's inner holes. The 9L link's sockets open the other way, so lay it flipped over; the 8L
+  dips only −15°.
+- The socket's axis may sit about 30° off the far ball's neck, so roll each link halfway between the two
+  hubs' normals; a link between hubs facing two different spheres (68° apart) needs a hub in between.
+- Rotors meeting blade tip to blade tip need 98 LDU between centres, but clear at 80 once the blades are
+  offset 15°.
+- Closing a loop needs `L.places = 2`: a 1° step moves the far end of a 9L link almost 3 LDU.
+- Workflow: solve the hub poses so every link spans its two balls exactly (least squares over the poses,
+  with the limits above as penalties), then `L.place` each hub, both towballs of every edge and the link
+  between them; conversion finds the joints and closes the loops. Place them breadth first from the root
+  hub so each section stays together in the path text.
+- Glazing: `plate 2x4 with towball socket on top` takes a ball through its top, so it lies across the
+  neck (a pane hangs parallel to the hub); `plate 2x2 with towball socket` clips on in line with the neck.
 
 **Car wheels:** `plate, modified 2x2 with wheels holder` bars + a wheel rim's clip
 (`axle bar a clip a regular 90 0`); see the car example (`python -m bricknet sample
