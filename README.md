@@ -114,6 +114,20 @@ python -m bricknet path2ldr out.jsonl -o models/      # generator output: one .l
 
 `sample` and `score` read and write the same jsonl row format as the distributed path datasets.
 
+## Hand Authoring
+
+`scripts/author.py` helps write path text directly, without a model:
+
+```bash
+python scripts/author.py find slope 45 2x2            # search part names
+python scripts/author.py part "brick 2x4"             # connector letters with part-local positions
+python scripts/author.py check model.txt --conns b    # line-accurate parse errors, world placements,
+                                                      # collisions, and part b's connectors in world space
+python scripts/author.py render model.txt out/        # CPU preview (requires bricknet-render)
+```
+
+Drafts may contain blank lines and `#` comments; `check --path clean.txt` writes the canonical path text.
+
 ## Evaluation
 
 The paper's image--text metrics (PE / SigLIP 2 / VQAScore) are in `eval/`; see `eval/README.md`.
