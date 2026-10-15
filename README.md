@@ -116,15 +116,18 @@ python -m bricknet path2ldr out.jsonl -o models/      # generator output: one .l
 
 ## Hand Authoring
 
-`scripts/author.py` helps write path text directly, without a model:
+`scripts/author.py` helps write path text directly, without a model (workflow, conventions, and
+recipes: [docs/authoring.md](docs/authoring.md)):
 
 ```bash
 python scripts/author.py find slope 45 2x2            # search part names
-python scripts/author.py part "brick 2x4"             # connector letters with part-local positions
+python scripts/author.py gallery parts.png --find "slope curved"   # contact sheet of matching parts
+python scripts/author.py part "brick 2x4" --png p.png # connector letters with part-local positions (and drawn)
 python scripts/author.py check model.txt --conns b    # line-accurate parse errors, world placements,
                                                       # collisions, and part b's connectors in world space
+python scripts/author.py try model.txt "plate 2x4 | red" "c stud stud {a,b} hole a {0,90}"   # compare variants
 python scripts/author.py view model.txt out.png --labels             # fast WebGL preview grid
-python scripts/author.py view model.txt out.png --views 120/20 --target c --zoom 3 --highlight c
+python scripts/author.py view model.txt out.png --views 120/20 --target c --zoom 3 --highlight c --conns c
 python scripts/author.py view model.txt --html model.html            # standalone interactive viewer
 python scripts/author.py render model.txt out/        # slow, photoreal Blender render (bricknet-render)
 ```
