@@ -73,6 +73,42 @@ Commands at a glance:
 | `publish FILE GALLERY [--image IMG]` | add a model to the gallery checkout with a preview; update its index |
 | `index GALLERY` | regenerate the gallery's `README.md` |
 
+## Layout scripts (large, regular models)
+
+Hand-written path text suits sculpted models of up to ~100 parts. For architecture (hundreds of parts of
+walls, floor bands, slabs, and roofs), write a layout script instead and let `scripts/layout.py` turn
+it into path text:
+
+```bash
+python scripts/layout.py ../bricknet-models/<name>/layout.py   # writes <name>/model.txt beside it
+```
+
+The script is plain Python with a `Layout` named `L` in scope (plus `TITLE`, `PROMPT`, `NOTES` to set):
+
+- **Grid:** stud `(i, j)` with `i` east and `j` south, so the front (LDraw −z) faces north and nothing is
+  mirrored (with −y up, east is −x). `level` counts plates above the plinth top; a part sits on its
+  level and rises by its height (plate 1, brick 3). The viewer's `right` view is the west face, and a
+  north-up top view is `--views 180/90`.
+- **`L.add(name, color, i, j, level, rot=0, center=False)`** places one part by its footprint's
+  min corner; `center=True` puts its origin on the stud (leaves, round pieces, a 2×2 on one stud).
+- **`L.run`, `L.ring`, `L.fill`** lay 1-wide lines, rectangle perimeters (alternate `phase` per layer to
+  interlock corners and joints), and filled areas (largest piece first; `holes=` leaves rectangles
+  out). `color` may be a function `(i, j, level) -> color`; pieces split where it changes.
+- **`L.section("...")`** labels what follows; labels become comments in the path text.
+
+Conversion finds every mated connector pair with bricknet's `parse_ldr` and attaches parts in authoring
+order, each to its earliest-placed neighbor. It fails with a list of loose parts (`#k name at stud
+(i, j) level L`), which is how floating overhangs show up. Then run `check` as usual. Lessons from the
+first campus model:
+
+- A part overlapping nothing below or above is loose. Overhangs need a slab whose pieces reach back
+  over the supported area: split fills so no overhanging row is a strip of its own, and keep accent
+  colors off ring corners, since color splits can isolate an end row.
+- Roofs: tiles alone cannot span a hollow building, so lay a plate fill, then tiles on top with
+  `holes=` where rooftop structures need studs.
+- Trees and anything else on a sidewalk need studs: leave gaps in tile runs and stand the trunk on the
+  plinth.
+
 ## Path text essentials
 
 ```
