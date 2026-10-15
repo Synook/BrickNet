@@ -404,14 +404,15 @@ def main():
     p.add_argument("--allow-collisions", action="store_true", help="exit 0 despite collisions")
     p.set_defaults(func=cmd_check)
 
-    p = sub.add_parser("render", help="render a draft or .ldr with bricknet-render on the CPU")
+    p = sub.add_parser(
+        "render", help="render a draft or .ldr with bricknet-render on the CPU; other flags pass through to it"
+    )
     p.add_argument("file", help="draft path text or .ldr")
     p.add_argument("out_dir")
     p.add_argument("--views", type=int, default=1)
     p.add_argument("--samples", type=int, default=32)
     p.add_argument("--resolution", default="512x512")
     p.add_argument("--device", default="CPU", choices=["CPU", "GPU"])
-    p.add_argument("extra", nargs=argparse.REMAINDER, help="further bricknet-render flags, after --")
     p.set_defaults(func=cmd_render)
 
     p = sub.add_parser("view", help="fast WebGL preview: a grid of camera views in one PNG")
@@ -438,9 +439,11 @@ def main():
     p.add_argument("--html", help="also write a standalone interactive viewer page")
     p.set_defaults(func=cmd_view)
 
-    args = ap.parse_args()
-    if getattr(args, "extra", None) and args.extra[0] == "--":
-        args.extra = args.extra[1:]
+    args, unknown = ap.parse_known_args()
+    if args.command == "render":
+        args.extra = [a for a in unknown if a != "--"]  # e.g. --yaw0 35 --pitch -20
+    elif unknown:
+        ap.error(f"unrecognized arguments: {' '.join(unknown)}")
     args.func(args)
 
 
