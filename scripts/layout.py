@@ -3,10 +3,10 @@
 
 A layout script is plain Python run by this file, with a `Layout` named `L` in scope:
 
-    python scripts/layout.py ../bricknet-models/google-slu/layout.py   # writes model.txt beside it
+    python scripts/layout.py ../bricknet-models/<name>/layout.py   # writes model.txt beside it
 
-    TITLE = "Google South Lake Union"
-    PROMPT = "the Google SLU office campus"
+    TITLE = "Office block"
+    PROMPT = "a six-storey office building"
     L.section("base")
     L.add("plate 6x24", "dark bluish grey", i=-2, j=-3, level=-1)
     L.ring(0, 0, 8, 9, level=0, kind="brick", color="white")

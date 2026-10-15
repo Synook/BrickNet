@@ -138,7 +138,7 @@ placed on the stud grid, with helpers for walls, rings, and filled areas) into p
 bricknet's own connector finder:
 
 ```bash
-python scripts/layout.py ../bricknet-models/google-slu/layout.py   # writes model.txt beside it
+python scripts/layout.py ../bricknet-models/<name>/layout.py   # writes model.txt beside it
 ```
 
 Finished models live in a separate gallery repo, one folder per model with its path text and a preview;

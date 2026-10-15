@@ -103,8 +103,8 @@ The script is plain Python with a `Layout` named `L` in scope (plus `TITLE`, `PR
 
 Conversion finds every mated connector pair with bricknet's `parse_ldr` and attaches parts in authoring
 order, each to its earliest-placed neighbor. It fails with a list of loose parts (`#k name at stud
-(i, j) level L`), which is how floating overhangs show up. Then run `check` as usual. Lessons from the
-first campus model:
+(i, j) level L`), which is how floating overhangs show up. Then run `check` as usual. Lessons from building
+with it:
 
 - A part overlapping nothing below or above is loose. Overhangs need a slab whose pieces reach back
   over the supported area: split fills so no overhanging row is a strip of its own, and keep accent
