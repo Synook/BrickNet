@@ -46,29 +46,32 @@ class Edge:
     child_conn: int
 
 
+# Angles are degrees: ints, or floats with at most two decimals when built with sub-degree precision.
+
+
 @dataclass(frozen=True)
 class StudEdge(Edge):
-    yaw: int = 0
+    yaw: int | float = 0
 
 
 @dataclass(frozen=True)
 class HingeEdge(Edge):
     flip: bool = False
-    yaw: int = 0
+    yaw: int | float = 0
 
 
 @dataclass(frozen=True)
 class AxleEdge(Edge):
     flip: bool = False
-    yaw: int = 0
+    yaw: int | float = 0
     slide: int = 0
 
 
 @dataclass(frozen=True)
 class BallEdge(Edge):
-    rx: int = 0
-    ry: int = 0
-    rz: int = 0
+    rx: int | float = 0
+    ry: int | float = 0
+    rz: int | float = 0
 
 
 @dataclass(frozen=True)

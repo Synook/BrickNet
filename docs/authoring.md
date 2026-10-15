@@ -100,6 +100,8 @@ The script is plain Python with a `Layout` named `L` in scope (plus `TITLE`, `PR
   rectangle is its `ring`. For curved corners, place quarter-round pieces with `L.add` and outline the
   rest; work out each piece's `rot` from its stud cells rather than by eye.
 - **`L.section("...")`** labels what follows; labels become comments in the path text.
+- **`L.places = 2`** keeps two decimals in joint angles when the script also places parts at arbitrary
+  angles (appending `(stem, color, matrix, section)` to `L.parts`); the default rounds to whole degrees.
 
 Conversion finds every mated connector pair with bricknet's `parse_ldr` and attaches parts in authoring
 order, each to its earliest-placed neighbor. It fails with a list of loose parts (`#k name at stud
@@ -141,6 +143,9 @@ a stud hole af open a 0                   edge for b: parent a's hole af takes b
 
   For hinge/ball/fixed, `POL` is the parent's polarity; `part` prints e.g. `hinge h on` and names the
   other side (`h in`).
+- Angles (`YAW`, `RX RY RZ`) are whole degrees in [0, 360), or decimals with up to two places (`37.25`,
+  no trailing zeros) where a joint sits at an arbitrary angle. A 1° step moves the far end of a 160-LDU
+  link almost 3 LDU, which is enough to keep a closed loop of ball joints from meeting.
 - Connector letters count within one (subtype, polarity) group, ordered by position (x, then z, ...).
   Never guess them; read `part`, `check --conns`, or `view --conns`.
 - `stud` = solid stud, `open` = hollow stud (usually with a `clip` connector at the same spot, which grips
