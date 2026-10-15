@@ -1,8 +1,8 @@
 # Hand-authoring BrickNet models
 
 How to build a LEGO model by writing BrickNet path text directly, with `scripts/author.py` for lookup,
-checking, and pictures. Everything here was learned building `models/carriage.txt` (a fantasy
-horse-drawn carriage, 76 parts); read that file alongside this one for a worked example.
+checking, and pictures. Everything here was learned building the fantasy horse-drawn carriage (76 parts,
+`carriage/model.txt` in the gallery repo); read it alongside this guide for a worked example.
 
 ## Setup
 
@@ -15,6 +15,19 @@ in the BrickNet data dir (`~/.local/share/bricknet/{cvx,glb}`). The mesh downloa
 
 Importing `bricknet` prints a `pybullet build time: ...` banner on stdout; filter it when piping.
 
+## Where models live
+
+Models go in the private gallery repo [Synook/bricknet-models](https://github.com/Synook/bricknet-models),
+not here; this repo holds the tools. Attach it to the session (`add_repo`, push access) and clone it
+next to this one, at `../bricknet-models`. Each model is a folder:
+
+- `<name>/model.txt`: the commented path text, the source of truth. Its first comment line is the title,
+  and a `# prompt: ...` line records what was asked for.
+- `<name>/preview.jpg`: a small preview (about 30 KB), written by `publish`.
+
+`.ldr` files and renders are derived; rebuild them when needed instead of committing them. The owner
+has approved committing and pushing straight to the gallery's `main`, with no PRs.
+
 ## The loop
 
 1. **Plan on paper.** Pick the root part (it sits at the origin with identity rotation, so its axes
@@ -25,22 +38,25 @@ Importing `bricknet` prints a `pybullet build time: ...` banner on stdout; filte
    hits as pictures; `part NAME` lists connector letters with part-local positions, and
    `part NAME --png out.png` draws them on the part. Check a part's connectors before designing around
    it: decorative parts often lack the connector you would expect.
-3. **Write the draft in stages** of 10–20 parts in `models/<name>.txt`, with `#` comments per section.
+3. **Write the draft in stages** of 10–20 parts in `M=../bricknet-models/<name>/model.txt`, starting
+   with the title and `# prompt:` lines, with `#` comments per section.
 4. **After each stage:** `check` (parse errors with line numbers, placement table, overlaps), then
    `view` for a picture. To attach the next part, read where the parent's connectors are with
    `check --conns X` (world positions, `*` marks mated ones) or `view --conns X` (drawn on the model).
 5. **Unsure of a letter, yaw, or flip?** Don't edit-and-rerun; `try` places every variant at once:
 
    ```bash
-   python scripts/author.py try models/m.txt "animal horse complete | white" "bj stud hole {a,b} open a {90,270}"
+   python scripts/author.py try $M "animal horse complete | white" "bj stud hole {a,b} open a {90,270}"
    ```
 
    Each variant reports origin, orientation, the parts it links to, and collisions. `--append K` adds
    variant K to the draft.
-6. **Finish:** `check -o models/<name>.ldr`, a labelled `view` grid, and `render` for the beauty shots,
-   e.g. `render models/m.txt out/ --views 2 --samples 96 --resolution 1024x768 --yaw0 35 --pitch -20`
-   (about 3 minutes per view on 4 CPU cores; extra flags pass through to bricknet-render). Commit the
-   `.txt` and `.ldr`.
+6. **Finish:** a labelled `view` grid to confirm, then a beauty shot into the scratchpad, e.g.
+   `render $M out/ --views 2 --samples 96 --resolution 1024x768 --yaw0 35 --pitch -20` (about 3 minutes
+   per view on 4 CPU cores; extra flags pass through to bricknet-render).
+7. **Publish:** `publish $M ../bricknet-models --image out/model_0000.png` refuses a model with
+   collisions, writes `preview.jpg` (downscaled from the render; without `--image`, a WebGL view), and
+   regenerates the gallery's `README.md` index. Commit and push the gallery to `main`.
 
 Commands at a glance:
 
@@ -54,6 +70,8 @@ Commands at a glance:
 | `view FILE OUT [--views ...] [--labels] [--conns ids] ...` | WebGL preview grid, ~5 s |
 | `view FILE --html OUT` | standalone interactive viewer page |
 | `render FILE OUTDIR [...]` | Blender render via bricknet-render, slow |
+| `publish FILE GALLERY [--image IMG]` | add a model to the gallery checkout with a preview; update its index |
+| `index GALLERY` | regenerate the gallery's `README.md` |
 
 ## Path text essentials
 

@@ -130,7 +130,11 @@ python scripts/author.py view model.txt out.png --labels             # fast WebG
 python scripts/author.py view model.txt out.png --views 120/20 --target c --zoom 3 --highlight c --conns c
 python scripts/author.py view model.txt --html model.html            # standalone interactive viewer
 python scripts/author.py render model.txt out/        # slow, photoreal Blender render (bricknet-render)
+python scripts/author.py publish model.txt ../bricknet-models --image out/model_0000.png  # add to the gallery
 ```
+
+Finished models live in a separate gallery repo, one folder per model with its path text and a preview;
+`publish` adds a model and regenerates the gallery's README index.
 
 Drafts may contain blank lines and `#` comments; `check --path clean.txt` writes the canonical path text.
 
@@ -141,7 +145,7 @@ side). `--labels` tags each visible part with its path-text id; `--highlight`, `
 pick which parts are emphasized or drawn; `--zoom`, `--target`, `--pan`, and `--ortho` move the camera.
 
 In Claude Code cloud sessions, `.claude/hooks/session-start.sh` sets everything up: a `.venv` with this
-package, Playwright, bricknet-render, and the linters; three.js for the viewer; and the collider and
+package, Playwright, bricknet-render, Pillow, and the linters; three.js for the viewer; and the collider and
 part-mesh downloads (these need network access to `keeper.mpdl.mpg.de`).
 
 ## Evaluation
