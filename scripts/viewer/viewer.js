@@ -313,8 +313,9 @@ export class Viewer {
   // Render a cols-wide grid of size x size tiles; returns {png: data URL, views: [{name, visible}]}.
   // Tiles default to one per view; explicit tiles are [{view, show: [ids], caption}], e.g. one part each.
   // markers: [{pos: LDraw [x, y, z], label, color, dim}] are drawn on every tile, hollow where occluded.
+  // format: 'png' or 'jpeg' (the data URL is still returned as `png`).
   shoot({ views = ['iso'], tiles = null, cols = null, size = 512, zoom = 1, pan = [0, 0], target = null,
-    ortho = false, labels = false, grid = true, markers = [], ...vis } = {}) {
+    ortho = false, labels = false, grid = true, markers = [], format = 'png', ...vis } = {}) {
     tiles = (tiles ?? views.map((view) => ({ view }))).map((t) => ({ ...t, view: parseView(t.view ?? 'iso') }));
     cols = cols ?? Math.ceil(Math.sqrt(tiles.length));
     const rows = Math.ceil(tiles.length / cols);
@@ -363,7 +364,7 @@ export class Viewer {
       ctx.strokeRect(x0 + 0.5, y0 + 0.5, size - 1, size - 1);
     }
     return {
-      png: out.toDataURL('image/png'),
+      png: format === 'jpeg' ? out.toDataURL('image/jpeg', 0.88) : out.toDataURL('image/png'),
       views: results.map(({ tile, picks }) => ({ name: tile.caption ?? tile.view.name, visible: Object.keys(picks) })),
     };
   }

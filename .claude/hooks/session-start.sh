@@ -1,6 +1,6 @@
 #!/bin/bash
 # Cloud-session setup for hand-authoring BrickNet models (scripts/author.py):
-#   .venv/                       bricknet (editable) + pybullet, Playwright, bricknet-render + bpy, linters
+#   .venv/                       bricknet (editable) + pybullet, Playwright, Pillow, bricknet-render + bpy, linters
 #   scripts/viewer/node_modules  three.js for the WebGL viewer
 #   <BrickNet data dir>/cvx      convex colliders (collision checks), 191 MiB download
 #   <BrickNet data dir>/glb      part meshes (both renderers), 323 MiB download
@@ -22,7 +22,7 @@ fi
 # the venv's own setuptools: Debian's patched one cannot build pybullet
 "$PY" -m pip install -q --upgrade pip setuptools wheel
 "$PY" -m pip install -q -e . \
-  "playwright==1.56.0" \
+  "playwright==1.56.0" "pillow" \
   "bricknet-render==0.1.0" "bpy==5.2.2" \
   "black==24.10.0" "flake8==7.1.1"
 
