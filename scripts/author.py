@@ -6,7 +6,9 @@
     python scripts/author.py check model.txt              # parse, place, collide: one row per part
     python scripts/author.py check model.txt --conns b,d  # also these parts' connectors, in world space
     python scripts/author.py check model.txt -o model.ldr --path clean.txt
-    python scripts/author.py render model.txt out/ --views 4
+    python scripts/author.py view model.txt out.png --labels  # fast WebGL preview grid (iso, front, right, top)
+    python scripts/author.py view model.txt out.png --views 120/20 --target c --zoom 3 --highlight c
+    python scripts/author.py render model.txt out/ --views 4  # slow, photoreal Blender render
 
 Drafts may contain blank lines and '#' comments; they are stripped before parsing, and --path writes
 the canonical path text. Node labels must match their position (a, b, ..., z, aa, ...): the parser
@@ -290,6 +292,16 @@ def cmd_check(args):
         sys.exit(1)
 
 
+def _ldr_text(src):
+    """LDR text of a .ldr file, or of a path-text draft (exits on a parse error)."""
+    if src.suffix == ".ldr":
+        return src.read_text()
+    tree, err = _parse(_strip(src.read_text()))
+    if err:
+        sys.exit(f"PARSE ERROR {err}")
+    return graph_to_ldr(tree_to_graph(tree))
+
+
 def cmd_render(args):
     src = Path(args.file)
     out = Path(args.out_dir)
@@ -297,11 +309,8 @@ def cmd_render(args):
     if src.suffix == ".ldr":
         ldr_path = src
     else:
-        tree, err = _parse(_strip(src.read_text()))
-        if err:
-            sys.exit(f"PARSE ERROR {err}")
         ldr_path = out / (src.stem + ".ldr")
-        ldr_path.write_text(graph_to_ldr(tree_to_graph(tree)))
+        ldr_path.write_text(_ldr_text(src))
     cmd = [
         sys.executable,
         "-m",
@@ -324,6 +333,54 @@ def cmd_render(args):
             sys.exit(log.read()[-3000:] + f"\nbricknet-render exited {rc}")
     for png in sorted(out.glob("*.png")):
         print(png)
+
+
+def _ids(arg):
+    return [t for t in (arg or "").split(",") if t]
+
+
+def cmd_view(args):
+    from viewer import driver  # scripts/viewer
+
+    src = Path(args.file)
+    parts = driver.ldr_parts(_ldr_text(src))
+    if args.html:
+        missing = driver.export_html(parts, Path(args.html), title=src.stem)
+        print(args.html + (f"  (no mesh for: {' '.join(missing)})" if missing else ""))
+    if not args.out:
+        return
+    upto = None
+    if args.upto:
+        upto = int(args.upto) if args.upto.isdigit() else id2i(args.upto) + 1
+    target = args.target
+    if target and "," in target:
+        target = [float(v) for v in target.split(",")]
+    opts = dict(
+        views=args.views.split(","),
+        cols=args.cols,
+        size=args.size,
+        zoom=args.zoom,
+        pan=[float(v) for v in args.pan.split(",")],
+        target=target,
+        ortho=args.ortho,
+        labels=args.labels,
+        grid=not args.no_grid,
+        edges=not args.no_edges,
+        hide=_ids(args.hide),
+        highlight=_ids(args.highlight),
+        upto=upto,
+    )
+    with driver.Session(parts) as session:
+        if session.missing:
+            print(f"warning: no mesh for {' '.join(session.missing)}; those parts are not drawn", file=sys.stderr)
+        views = session.shoot(Path(args.out), **opts)
+    print(args.out)
+    if args.labels:
+        seen = set().union(*(v["visible"] for v in views))
+        shown = [p["id"] for p in parts[:upto] if p["id"] not in _ids(args.hide)]
+        unseen = [i for i in shown if i not in seen and (not args.highlight or i in _ids(args.highlight))]
+        if unseen:
+            print(f"not visible in any view: {' '.join(unseen)}")
 
 
 def main():
@@ -356,6 +413,30 @@ def main():
     p.add_argument("--device", default="CPU", choices=["CPU", "GPU"])
     p.add_argument("extra", nargs=argparse.REMAINDER, help="further bricknet-render flags, after --")
     p.set_defaults(func=cmd_render)
+
+    p = sub.add_parser("view", help="fast WebGL preview: a grid of camera views in one PNG")
+    p.add_argument("file", help="draft path text or .ldr")
+    p.add_argument("out", nargs="?", help="output PNG")
+    p.add_argument(
+        "--views",
+        default="iso,front,right,top",
+        help="comma list of front, back, left, right, top, bottom, iso, iso-back, or AZ/EL degrees "
+        "(azimuth 0 = front, 90 = right side; elevation 90 = straight down)",
+    )
+    p.add_argument("--cols", type=int, help="tiles per row (default: a square-ish grid)")
+    p.add_argument("--size", type=int, default=512, help="tile size in pixels")
+    p.add_argument("--zoom", type=float, default=1.0, help=">1 zooms in from the fitted view")
+    p.add_argument("--target", help="center on a part id (e.g. c) or an LDU point x,y,z")
+    p.add_argument("--pan", default="0,0", help="shift the view by X,Y frame widths, e.g. 0.25,0")
+    p.add_argument("--ortho", action="store_true", help="orthographic projection")
+    p.add_argument("--labels", action="store_true", help="label parts with their path-text ids")
+    p.add_argument("--highlight", help="comma list of part ids to emphasize; the rest are ghosted")
+    p.add_argument("--hide", help="comma list of part ids to leave out")
+    p.add_argument("--upto", help="show only the first N parts, or parts through id X")
+    p.add_argument("--no-grid", action="store_true", help="omit the 1-stud ground grid")
+    p.add_argument("--no-edges", action="store_true", help="omit part edge lines")
+    p.add_argument("--html", help="also write a standalone interactive viewer page")
+    p.set_defaults(func=cmd_view)
 
     args = ap.parse_args()
     if getattr(args, "extra", None) and args.extra[0] == "--":

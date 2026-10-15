@@ -5,3 +5,5 @@ data/ldraw.tar.xz
 .coverage
 coverage.html
 dist/
+node_modules/
+.venv/

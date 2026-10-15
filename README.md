@@ -123,10 +123,23 @@ python scripts/author.py find slope 45 2x2            # search part names
 python scripts/author.py part "brick 2x4"             # connector letters with part-local positions
 python scripts/author.py check model.txt --conns b    # line-accurate parse errors, world placements,
                                                       # collisions, and part b's connectors in world space
-python scripts/author.py render model.txt out/        # CPU preview (requires bricknet-render)
+python scripts/author.py view model.txt out.png --labels             # fast WebGL preview grid
+python scripts/author.py view model.txt out.png --views 120/20 --target c --zoom 3 --highlight c
+python scripts/author.py view model.txt --html model.html            # standalone interactive viewer
+python scripts/author.py render model.txt out/        # slow, photoreal Blender render (bricknet-render)
 ```
 
 Drafts may contain blank lines and `#` comments; `check --path clean.txt` writes the canonical path text.
+
+`view` renders flat-shaded parts with edge lines, a 1-stud ground grid, and LDraw axes in headless
+Chromium (`scripts/viewer/`), a grid of camera views per PNG in a few seconds. Views are presets
+(`front back left right top bottom iso iso-back`) or `AZ/EL` degrees (azimuth 0 = front, 90 = right
+side). `--labels` tags each visible part with its path-text id; `--highlight`, `--hide`, and `--upto`
+pick which parts are emphasized or drawn; `--zoom`, `--target`, `--pan`, and `--ortho` move the camera.
+
+In Claude Code cloud sessions, `.claude/hooks/session-start.sh` sets everything up: a `.venv` with this
+package, Playwright, bricknet-render, and the linters; three.js for the viewer; and the collider and
+part-mesh downloads (these need network access to `keeper.mpdl.mpg.de`).
 
 ## Evaluation
 
