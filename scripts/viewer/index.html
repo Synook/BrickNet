@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BrickNet Viewer</title>
+<script type="importmap">
+{"imports": {"three": "./node_modules/three/build/three.module.js", "three/addons/": "./node_modules/three/examples/jsm/"}}
+</script>
+<style>
+  :root { --bg: #f2f2ef; --fg: #222; --panel: rgba(255, 255, 255, 0.92); --line: #c9c9c2; --accent: #2e6fd8; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg: #1d1d1b; --fg: #e8e8e4; --panel: rgba(40, 40, 38, 0.92); --line: #4a4a46; --accent: #7aa7f0; }
+  }
+  :root[data-theme="dark"] { --bg: #1d1d1b; --fg: #e8e8e4; --panel: rgba(40, 40, 38, 0.92); --line: #4a4a46; --accent: #7aa7f0; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, sans-serif; }
+  canvas#c { display: block; width: 100vw; height: 100vh; touch-action: none; }
+  #bar { position: fixed; left: 16px; right: 16px; top: 12px; display: none; flex-wrap: wrap; gap: 6px; align-items: center;
+         background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  #bar button { font: inherit; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: var(--fg); cursor: pointer; }
+  #bar button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  #bar label { display: inline-flex; gap: 6px; align-items: center; }
+  #bar input[type=range] { width: min(240px, 40vw); }
+  #labels { position: fixed; inset: 0; pointer-events: none; }
+  #labels span { position: absolute; transform: translate(-50%, -50%); font: 700 12px/1 ui-monospace, monospace; color: #111;
+                 background: rgba(255, 255, 255, 0.88); border: 1px solid #222; padding: 2px 3px; }
+  #hint { position: fixed; left: 16px; bottom: 12px; opacity: 0.7; font-size: 12px; display: none; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="labels"></div>
+<div id="bar"></div>
+<div id="hint">drag: rotate · right-drag: pan · wheel: zoom</div>
+<script id="model" type="application/json">null</script>
+<script type="module">
+import { Viewer, PRESETS, parseView, placeLabels } from './viewer.js'; // BRICKNET-INLINE-VIEWER
+
+const canvas = document.getElementById('c');
+window.BrickNet = { Viewer, PRESETS, parseView };
+const embedded = JSON.parse(document.getElementById('model').textContent);
+if (embedded) interactive(embedded);
+window.bricknetReady = true;
+
+function b64(s) {
+  const bin = atob(s), out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out.buffer;
+}
+
+async function interactive(model) {
+  const { OrbitControls } = await import('three/addons/controls/OrbitControls.js');
+  const viewer = new Viewer(canvas);
+  await viewer.load(model, async (stem) => (model.meshes[stem] ? b64(model.meshes[stem]) : null));
+  const state = { view: 'iso', labels: false, edges: true, grid: true, ortho: false, upto: viewer.parts.length };
+  let cam, controls;
+
+  const bar = document.getElementById('bar');
+  bar.style.display = 'flex';
+  document.getElementById('hint').style.display = 'block';
+  const button = (text, onclick) => {
+    const b = document.createElement('button');
+    b.textContent = text;
+    b.onclick = onclick;
+    bar.append(b);
+    return b;
+  };
+  const viewButtons = Object.keys(PRESETS).map((name) => [name, button(name, () => { state.view = name; reframe(); })]);
+  const toggles = ['labels', 'edges', 'grid', 'ortho'].map((key) => [key, button(key, () => {
+    state[key] = !state[key];
+    key === 'ortho' ? reframe() : refresh();
+  })]);
+  const step = document.createElement('label');
+  step.innerHTML = `parts <input type="range" min="1" max="${viewer.parts.length}" value="${viewer.parts.length}"> <output></output>`;
+  bar.append(step);
+  const range = step.querySelector('input'), counter = step.querySelector('output');
+  range.oninput = () => { state.upto = +range.value; refresh(); };
+
+  function size() {
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    viewer.renderer.setPixelRatio(window.devicePixelRatio);
+    viewer.renderer.setSize(w, h, false);
+    return [w, h];
+  }
+
+  function reframe() {
+    const [w, h] = size();
+    viewer.configure({ upto: state.upto, edges: state.edges });
+    viewer.setGrid(state.grid);
+    cam = viewer.frame(parseView(state.view), { ortho: state.ortho, aspect: w / h });
+    controls?.dispose();
+    controls = new OrbitControls(cam, canvas);
+    controls.target.copy(viewer.visibleBox().getCenter(cam.position.clone()));
+    controls.update();
+    controls.addEventListener('change', draw);
+    controls.addEventListener('end', drawLabels);
+    refresh();
+  }
+
+  function refresh() {
+    viewer.configure({ upto: state.upto, edges: state.edges });
+    viewer.setGrid(state.grid);
+    for (const [name, b] of viewButtons) b.setAttribute('aria-pressed', name === state.view);
+    for (const [key, b] of toggles) b.setAttribute('aria-pressed', state[key]);
+    counter.textContent = `${state.upto} / ${viewer.parts.length}`;
+    draw();
+    drawLabels();
+  }
+
+  function draw() {
+    const [w, h] = size();
+    if (cam.isPerspectiveCamera) cam.aspect = w / h;
+    cam.updateProjectionMatrix();
+    viewer.light.position.copy(cam.position);
+    viewer.light.target.position.copy(controls.target);
+    viewer.light.target.updateMatrixWorld();
+    if (viewer.grid) viewer.grid.visible = cam.position.y >= viewer.grid.position.y;
+    viewer.renderer.setScissorTest(false);
+    viewer.renderer.setViewport(0, 0, w, h);
+    viewer.renderer.render(viewer.scene, cam);
+    document.getElementById('labels').replaceChildren();
+  }
+
+  function drawLabels() {
+    const layer = document.getElementById('labels');
+    layer.replaceChildren();
+    if (!state.labels) return;
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    const picks = viewer.pick(cam, w, h);
+    draw();
+    for (const [id, x, y] of placeLabels(picks, (id) => 8 * id.length + 8, 18)) {
+      const s = document.createElement('span');
+      s.textContent = id;
+      s.style.left = `${x}px`;
+      s.style.top = `${y}px`;
+      layer.append(s);
+    }
+  }
+
+  window.addEventListener('resize', reframe);
+  reframe();
+}
+</script>
+</body>
+</html>

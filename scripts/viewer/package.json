@@ -1,0 +1,8 @@
+{
+  "name": "bricknet-viewer",
+  "private": true,
+  "description": "WebGL preview renderer for scripts/author.py view",
+  "dependencies": {
+    "three": "0.170.0"
+  }
+}

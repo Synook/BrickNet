@@ -114,6 +114,40 @@ python -m bricknet path2ldr out.jsonl -o models/      # generator output: one .l
 
 `sample` and `score` read and write the same jsonl row format as the distributed path datasets.
 
+## Hand Authoring
+
+`scripts/author.py` helps write path text directly, without a model (workflow, conventions, and
+recipes: [docs/authoring.md](docs/authoring.md)):
+
+```bash
+python scripts/author.py find slope 45 2x2            # search part names
+python scripts/author.py gallery parts.png --find "slope curved"   # contact sheet of matching parts
+python scripts/author.py part "brick 2x4" --png p.png # connector letters with part-local positions (and drawn)
+python scripts/author.py check model.txt --conns b    # line-accurate parse errors, world placements,
+                                                      # collisions, and part b's connectors in world space
+python scripts/author.py try model.txt "plate 2x4 | red" "c stud stud {a,b} hole a {0,90}"   # compare variants
+python scripts/author.py view model.txt out.png --labels             # fast WebGL preview grid
+python scripts/author.py view model.txt out.png --views 120/20 --target c --zoom 3 --highlight c --conns c
+python scripts/author.py view model.txt --html model.html            # standalone interactive viewer
+python scripts/author.py render model.txt out/        # slow, photoreal Blender render (bricknet-render)
+python scripts/author.py publish model.txt ../bricknet-models --image out/model_0000.png  # add to the gallery
+```
+
+Finished models live in a separate gallery repo, one folder per model with its path text and a preview;
+`publish` adds a model and regenerates the gallery's README index.
+
+Drafts may contain blank lines and `#` comments; `check --path clean.txt` writes the canonical path text.
+
+`view` renders flat-shaded parts with edge lines, a 1-stud ground grid, and LDraw axes in headless
+Chromium (`scripts/viewer/`), a grid of camera views per PNG in a few seconds. Views are presets
+(`front back left right top bottom iso iso-back`) or `AZ/EL` degrees (azimuth 0 = front, 90 = right
+side). `--labels` tags each visible part with its path-text id; `--highlight`, `--hide`, and `--upto`
+pick which parts are emphasized or drawn; `--zoom`, `--target`, `--pan`, and `--ortho` move the camera.
+
+In Claude Code cloud sessions, `.claude/hooks/session-start.sh` sets everything up: a `.venv` with this
+package, Playwright, bricknet-render, Pillow, and the linters; three.js for the viewer; and the collider and
+part-mesh downloads (these need network access to `keeper.mpdl.mpg.de`).
+
 ## Evaluation
 
 The paper's image--text metrics (PE / SigLIP 2 / VQAScore) are in `eval/`; see `eval/README.md`.
