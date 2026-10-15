@@ -337,12 +337,17 @@ def parse_ldr(text: str) -> Graph:
     return Graph(part_ids, colors, mats, edges, components)
 
 
-def _qdeg(rad):
-    """Quantize radians to integer degrees in [0, 360)."""
-    return round(np.degrees(rad)) % 360
+def _qdeg(rad, places=0):
+    """Quantize radians to degrees in [0, 360): whole degrees by default, or `places` decimals (at most 2, the
+    path-text limit). Whole values come back as ints, so default output is unchanged."""
+    if not places:
+        return round(np.degrees(rad)) % 360
+    v = round(float(np.degrees(rad)), min(places, 2)) % 360
+    v = round(v, min(places, 2))
+    return int(v) if v == int(v) else v
 
 
-def _make_tree_edge(ge, parent, child, forward, part_ids):
+def _make_tree_edge(ge, parent, child, forward, part_ids, places=0):
     family = str(ge["family"])
     yaw, flip, rot = float(ge["yaw"]), bool(ge["flip"]), ge["rot"]
 
@@ -367,18 +372,18 @@ def _make_tree_edge(ge, parent, child, forward, part_ids):
     backward = not forward and not flip
 
     if family == "stud":
-        return StudEdge(*base, yaw=_qdeg(yaw if forward else -yaw))
+        return StudEdge(*base, yaw=_qdeg(yaw if forward else -yaw, places))
     if family == "hinge":
-        return HingeEdge(*base, flip=flip, yaw=_qdeg(yaw if forward or flip else -yaw))
+        return HingeEdge(*base, flip=flip, yaw=_qdeg(yaw if forward or flip else -yaw, places))
     if family == "axle":
         return AxleEdge(
             *base,
             flip=flip,
-            yaw=_qdeg(-rot[0] if backward else rot[0]),
+            yaw=_qdeg(-rot[0] if backward else rot[0], places),
             slide=round(-yaw if backward else yaw),
         )
     if family == "ball":
-        return BallEdge(*base, rx=_qdeg(rot[0]), ry=_qdeg(rot[1]), rz=_qdeg(rot[2]))
+        return BallEdge(*base, rx=_qdeg(rot[0], places), ry=_qdeg(rot[1], places), rz=_qdeg(rot[2], places))
     return FixedEdge(*base)
 
 
@@ -408,13 +413,14 @@ def _component_adjacency(graph: Graph, component: int):
     return comp, _adjacency(graph.edges, comp)
 
 
-def _build_tree(graph: Graph, order, parent_of) -> Tree:
+def _build_tree(graph: Graph, order, parent_of, places=0) -> Tree:
     """Assemble a walk's Tree. order: graph node indices in visit order (tree index = position).
-    parent_of: node -> (parent node, edge index, fwd) -- the exact edge the walk accepted."""
+    parent_of: node -> (parent node, edge index, fwd) -- the exact edge the walk accepted. places: decimal
+    places kept in joint angles (0 = whole degrees)."""
     remap = {old: new for new, old in enumerate(order)}
     parts = tuple(Part(graph.part_ids[o], graph.colors[o]) for o in order)
     tree_edges = tuple(
-        _make_tree_edge(graph.edges[ei], remap[par], remap[node], fwd, graph.part_ids)
+        _make_tree_edge(graph.edges[ei], remap[par], remap[node], fwd, graph.part_ids, places)
         for node in order
         if node in parent_of
         for par, ei, fwd in [parent_of[node]]

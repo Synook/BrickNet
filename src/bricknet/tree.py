@@ -9,7 +9,8 @@
     ball    = ID " ball " ID " " POL " " ID " " ID " " DEG " " DEG " " DEG
     fixed   = ID " fixed " ID " " POL " " ID " " ID
     ID      = [a-z]+
-    DEG     = INT in [0, 360)
+    DEG     = INT in [0, 360), or a decimal in [0, 360) with one or two fractional digits and no trailing
+              zero (12.5, 0.25); whole degrees unless a joint needs finer (see graph._qdeg's `places`)
     INT     = canonical integer (no leading zeros, no +)
     FLIP    = "regular" | "flip"
     POL     = "in" | "on"
@@ -20,6 +21,7 @@
 """
 
 import math
+import re
 from dataclasses import dataclass
 
 import numpy as np
@@ -83,11 +85,28 @@ def _int(tok: str, label: str) -> int:
     return v
 
 
-def _deg(tok: str) -> int:
-    v = _int(tok, "degree")
+_DEC = re.compile(r"(0|[1-9][0-9]*)\.[0-9]?[1-9]")
+
+
+def _deg(tok: str) -> int | float:
+    """A DEG token: an int for whole degrees, else a float with at most two decimals."""
+    if "." in tok:
+        if not _DEC.fullmatch(tok):
+            raise ParseError(f"degree has non-canonical form: {tok!r}")
+        v = float(tok)
+    else:
+        v = _int(tok, "degree")
     if not (0 <= v < 360):
         raise ParseError(f"degree {v} not in [0, 360)")
     return v
+
+
+def fmt_deg(v: int | float) -> str:
+    """Canonical DEG text: whole degrees as integers, else up to two decimals without trailing zeros."""
+    v = round(float(v), 2)
+    if v == int(v):
+        return str(int(v))
+    return f"{v:.2f}".rstrip("0")
 
 
 def _flip(tok: str) -> bool:
@@ -174,18 +193,19 @@ def serialize_tree(tree: Tree, catalog: Catalog | None = None) -> str:
         p, pc, cc = i2id(e.parent), i2id(e.parent_conn), i2id(e.child_conn)
         if isinstance(e, StudEdge):
             psn, csn = StudSub(e.parent_sub).name, StudSub(e.child_sub).name
-            lines.append(f"{p} stud {psn} {pc} {csn} {cc} {e.yaw}")
+            lines.append(f"{p} stud {psn} {pc} {csn} {cc} {fmt_deg(e.yaw)}")
         elif isinstance(e, AxleEdge):
             psn, csn = AxleSub(e.parent_sub).name, AxleSub(e.child_sub).name
             f = "flip" if e.flip else "regular"
-            lines.append(f"{p} axle {psn} {pc} {csn} {cc} {f} {e.yaw} {e.slide}")
+            lines.append(f"{p} axle {psn} {pc} {csn} {cc} {f} {fmt_deg(e.yaw)} {e.slide}")
         else:
             sub, pol = i2id(e.parent_sub // 2), "in" if e.parent_sub % 2 == 0 else "on"
             if isinstance(e, HingeEdge):
                 f = "flip" if e.flip else "regular"
-                lines.append(f"{p} hinge {sub} {pol} {pc} {cc} {f} {e.yaw}")
+                lines.append(f"{p} hinge {sub} {pol} {pc} {cc} {f} {fmt_deg(e.yaw)}")
             elif isinstance(e, BallEdge):
-                lines.append(f"{p} ball {sub} {pol} {pc} {cc} {e.rx} {e.ry} {e.rz}")
+                rot = " ".join(fmt_deg(v) for v in (e.rx, e.ry, e.rz))
+                lines.append(f"{p} ball {sub} {pol} {pc} {cc} {rot}")
             else:
                 lines.append(f"{p} fixed {sub} {pol} {pc} {cc}")
     return "\n".join(lines) + "\n"

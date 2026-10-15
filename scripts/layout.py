@@ -110,6 +110,7 @@ def _lines(cells, axis):
 class Layout:
     def __init__(self):
         self.parts = []  # (stem, color code, 4x4 matrix, section)
+        self.places = 0  # decimals kept in joint angles; 2 for parts at arbitrary angles (ball joints, hinges)
         self.sec = ""
         cat = load_catalog()
         self._cat = cat
@@ -271,7 +272,7 @@ class Layout:
             if len(rest) == len(pending):
                 break
             pending = rest
-        lines = serialize_tree(_build_tree(graph, order, parent_of)).split("\n")
+        lines = serialize_tree(_build_tree(graph, order, parent_of, self.places)).split("\n")
         chunks = [lines[:1]] + [lines[k : k + 2] for k in range(1, len(lines) - 1, 2)]
         out, last = [], None
         for node, chunk in zip(order, chunks):
