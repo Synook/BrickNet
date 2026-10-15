@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Helpers for writing path text by hand.
+"""Helpers for writing path text by hand (workflow and conventions: docs/authoring.md).
 
     python scripts/author.py find slope 45 2x2            # search the part vocabulary
+    python scripts/author.py gallery out.png 3001 --find "slope curved"   # contact sheet of parts
     python scripts/author.py part "brick 2x4"             # connector letters, part-local positions
+    python scripts/author.py part "brick 2x4" --png out.png --sub stud,hole  # ... drawn on the part
     python scripts/author.py check model.txt              # parse, place, collide: one row per part
     python scripts/author.py check model.txt --conns b,d  # also these parts' connectors, in world space
     python scripts/author.py check model.txt -o model.ldr --path clean.txt
+    python scripts/author.py try model.txt "animal horse complete | white" "bj stud hole {a,b} open a {90,270}"
     python scripts/author.py view model.txt out.png --labels  # fast WebGL preview grid (iso, front, right, top)
-    python scripts/author.py view model.txt out.png --views 120/20 --target c --zoom 3 --highlight c
+    python scripts/author.py view model.txt out.png --views 120/20 --target c --zoom 3 --highlight c --conns c
     python scripts/author.py render model.txt out/ --views 4  # slow, photoreal Blender render
 
 Drafts may contain blank lines and '#' comments; they are stripped before parsing, and --path writes
@@ -25,7 +28,9 @@ axis. Coordinates are LDraw LDU: 20 per stud pitch, 8 per plate, 24 per brick, a
 """
 
 import argparse
+import itertools
 import math
+import re
 import subprocess
 import sys
 import tempfile
@@ -125,6 +130,60 @@ def _bounds_text(pid):
     return "bounds " + "  ".join(f"{a} {_num(lo[i])}..{_num(hi[i])}" for i, a in enumerate("xyz"))
 
 
+_MARK_COLORS = {
+    **dict.fromkeys(["stud", "open"], "#c62828"),
+    **dict.fromkeys(["hole", "tube", "post"], "#1565c0"),
+    **dict.fromkeys(["bar", "axle", "pin"], "#2e7d32"),
+    **dict.fromkeys(["clip", "cross", "socket"], "#00838f"),
+    "hinge": "#ef6c00",
+    "ball": "#6a1b9a",
+    "fixed": "#616161",
+}
+
+
+def _world_conns(pid, m):
+    """Connectors of part pid placed at m, in canonical order: [(label, sub, pos, axis)], where label is the
+    text an edge line uses, e.g. "hole c" or "hinge h on a"."""
+    frames = load_connectors()[pid]
+    out = []
+    for kind, sub, pol, idx, _ in load_connector_list()[pid]:
+        f = m @ frames[(sub, pol)][idx]
+        group = sub if pol is None else f"{_family(kind, sub)} {i2id(int(sub))} {pol}"
+        out.append((f"{group} {i2id(idx)}", sub if pol is None else _family(kind, sub), f[:3, 3], -f[:3, 1]))
+    return out
+
+
+def _markers(pid, m, mated=None, subs=None):
+    """Viewer markers for a placed part's connectors; mated maps flat connector index -> other part index."""
+    out = []
+    for flat, (label, sub, pos, _) in enumerate(_world_conns(pid, m)):
+        if subs and sub not in subs and label.split(" ")[0] not in subs:
+            continue
+        other = (mated or {}).get(flat)
+        out.append(
+            {
+                "pos": [float(v) for v in pos],
+                "label": label if other is None else f"{label}*{i2id(other)}",
+                "color": _MARK_COLORS.get(sub, "#333333"),
+                "dim": other is not None,
+            }
+        )
+    return out
+
+
+def _mated(ldr, n):
+    """From the realized LDR: ({(part, flat conn): other part}, linked-neighbor count per part)."""
+    links = parse_ldr(ldr).edges
+    used, degree = {}, [0] * n
+    for e in links:
+        a, b = int(e["a"]), int(e["b"])
+        used[(a, int(e["a_conn"]))], used[(b, int(e["b_conn"]))] = b, a
+    for a, b in {(min(int(e["a"]), int(e["b"])), max(int(e["a"]), int(e["b"]))) for e in links}:
+        degree[a] += 1
+        degree[b] += 1
+    return used, degree
+
+
 def cmd_find(args):
     hits = _search(args.query)
     print("\n".join(_find_rows(hits[: args.limit])))
@@ -137,6 +196,20 @@ def cmd_find(args):
 def cmd_part(args):
     cat = load_catalog()
     pid = _resolve(" ".join(args.query))
+    if args.png:
+        from viewer import driver  # scripts/viewer
+
+        part = {
+            "id": "a",
+            "stem": cat.id_to_stem[pid],
+            "color": cat.color_to_code[args.color],
+            "matrix": [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1],
+        }
+        opts = _shoot_opts(args)
+        opts["markers"] = _markers(pid, np.eye(4), subs=set(_ids(args.sub)))
+        with driver.Session([part]) as session:
+            session.shoot(Path(args.png), **opts)
+        print(args.png)
     print(f"{cat.id_to_name[pid]}  [{cat.id_to_stem[pid]}]  {_bounds_text(pid)}  (LDU, -y up)")
     frames = load_connectors()[pid]
     conns = load_connector_list()[pid]
@@ -235,15 +308,7 @@ def cmd_check(args):
 
     # every mated connector pair in the realized model, tree edges or not
     ldr = graph_to_ldr(graph)
-    links = parse_ldr(ldr).edges
-    used = {}  # (part, flat conn) -> other part
-    degree = [0] * len(pids)
-    for e in links:
-        a, b = int(e["a"]), int(e["b"])
-        used[(a, int(e["a_conn"]))], used[(b, int(e["b_conn"]))] = b, a
-    for a, b in {(min(int(e["a"]), int(e["b"])), max(int(e["a"]), int(e["b"]))) for e in links}:
-        degree[a] += 1
-        degree[b] += 1
+    used, degree = _mated(ldr, len(pids))
 
     print(
         "id   part                                      color                 origin              "
@@ -256,6 +321,8 @@ def cmd_check(args):
             lo_all, hi_all = np.minimum(lo_all, lo), np.maximum(hi_all, hi)
         except (FileNotFoundError, RuntimeError):
             pass
+        if args.last and i < len(pids) - args.last and i not in hit_of:
+            continue
         name, color = cat.id_to_name[p.part_id], cat.code_to_color[p.color]
         print(
             f"{i2id(i):<4} {name[:41]:<41} {color[:21]:<21} {_vec(m[:3, 3]):<19} {_orientation(m):<13} "
@@ -275,14 +342,11 @@ def cmd_check(args):
         k = id2i(label)
         if k >= len(pids):
             sys.exit(f"--conns {label}: no such part")
-        m, conns = mats[k], load_connector_list()[pids[k]]
         print(f"\n{label} {cat.id_to_name[pids[k]]}: connectors in world space (* = mated, with part)")
-        frames = load_connectors()[pids[k]]
-        for flat, (kind, sub, pol, idx, _) in enumerate(conns):
-            f = m @ frames[(sub, pol)][idx]
-            group = sub if pol is None else f"{_family(kind, sub)} {i2id(int(sub))} {pol}"
+        for flat, (name, _, pos, axis) in enumerate(_world_conns(pids[k], mats[k])):
+            group, letter = name.rsplit(" ", 1)
             mark = f"* {i2id(used[(k, flat)])}" if (k, flat) in used else ""
-            print(f"  {group:<14} {i2id(idx):>3} {_vec(f[:3, 3])}  axis {_dir(-f[:3, 1]):<10} {mark}")
+            print(f"  {group:<14} {letter:>3} {_vec(pos)}  axis {_dir(axis):<10} {mark}")
 
     if args.output:
         Path(args.output).write_text(ldr)
@@ -292,14 +356,22 @@ def cmd_check(args):
         sys.exit(1)
 
 
-def _ldr_text(src):
-    """LDR text of a .ldr file, or of a path-text draft (exits on a parse error)."""
+def _realize(src):
+    """(LDR text, part ids, world matrices) of a .ldr file or a path-text draft (exits on a parse error)."""
     if src.suffix == ".ldr":
-        return src.read_text()
+        ldr = src.read_text()
+        graph = parse_ldr(ldr)
+        return ldr, list(graph.part_ids), list(graph.transforms)
     tree, err = _parse(_strip(src.read_text()))
     if err:
         sys.exit(f"PARSE ERROR {err}")
-    return graph_to_ldr(tree_to_graph(tree))
+    graph = tree_to_graph(tree)
+    return graph_to_ldr(graph), [p.part_id for p in tree.parts], [np.asarray(m) for m in decode_graph(graph)]
+
+
+def _ldr_text(src):
+    """LDR text of a .ldr file, or of a path-text draft (exits on a parse error)."""
+    return src.read_text() if src.suffix == ".ldr" else _realize(src)[0]
 
 
 def cmd_render(args):
@@ -343,7 +415,8 @@ def cmd_view(args):
     from viewer import driver  # scripts/viewer
 
     src = Path(args.file)
-    parts = driver.ldr_parts(_ldr_text(src))
+    ldr, pids, mats = _realize(src)
+    parts = driver.ldr_parts(ldr)
     if args.html:
         missing = driver.export_html(parts, Path(args.html), title=src.stem)
         print(args.html + (f"  (no mesh for: {' '.join(missing)})" if missing else ""))
@@ -352,24 +425,22 @@ def cmd_view(args):
     upto = None
     if args.upto:
         upto = int(args.upto) if args.upto.isdigit() else id2i(args.upto) + 1
-    target = args.target
-    if target and "," in target:
-        target = [float(v) for v in target.split(",")]
     opts = dict(
-        views=args.views.split(","),
-        cols=args.cols,
-        size=args.size,
-        zoom=args.zoom,
-        pan=[float(v) for v in args.pan.split(",")],
-        target=target,
-        ortho=args.ortho,
+        _shoot_opts(args),
         labels=args.labels,
-        grid=not args.no_grid,
-        edges=not args.no_edges,
         hide=_ids(args.hide),
         highlight=_ids(args.highlight),
         upto=upto,
+        markers=[],
     )
+    if args.conns:
+        used, _ = _mated(ldr, len(pids))
+        for label in _ids(args.conns):
+            k = id2i(label)
+            if k >= len(pids):
+                sys.exit(f"--conns {label}: no such part")
+            mated = {flat: other for (part, flat), other in used.items() if part == k}
+            opts["markers"] += _markers(pids[k], mats[k], mated, set(_ids(args.sub)))
     with driver.Session(parts) as session:
         if session.missing:
             print(f"warning: no mesh for {' '.join(session.missing)}; those parts are not drawn", file=sys.stderr)
@@ -383,6 +454,112 @@ def cmd_view(args):
             print(f"not visible in any view: {' '.join(unseen)}")
 
 
+def _shoot_opts(args):
+    """Camera and layout options shared by the commands that render through the WebGL viewer."""
+    target = args.target
+    if target and "," in target:
+        target = [float(v) for v in target.split(",")]
+    return dict(
+        views=args.views.split(","),
+        cols=args.cols,
+        size=args.size,
+        zoom=args.zoom,
+        pan=[float(v) for v in args.pan.split(",")],
+        target=target,
+        ortho=args.ortho,
+        grid=not args.no_grid,
+        edges=not args.no_edges,
+    )
+
+
+def cmd_gallery(args):
+    from viewer import driver  # scripts/viewer
+
+    cat = load_catalog()
+    pids = [_resolve(q) for q in args.parts]
+    if args.find:
+        pids += _search(args.find.split())[: args.limit]
+    if not pids:
+        sys.exit("nothing to show: name parts or pass --find")
+    color = cat.color_to_code[args.color]
+    identity = [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]
+    parts = [{"id": i2id(k), "stem": cat.id_to_stem[p], "color": color, "matrix": identity} for k, p in enumerate(pids)]
+    tiles = [
+        {"view": args.view, "show": [part["id"]], "caption": f"{cat.id_to_stem[p]} {cat.id_to_name[p]}"}
+        for part, p in zip(parts, pids)
+    ]
+    with driver.Session(parts) as session:
+        session.shoot(Path(args.out), tiles=tiles, cols=args.cols, size=args.size, grid=False, ortho=args.ortho)
+    print(args.out)
+
+
+def _expand(text):
+    """Every expansion of {x,y,...} alternatives in text, in order."""
+    groups = re.findall(r"\{([^{}]*)\}", text)
+    template = re.sub(r"\{[^{}]*\}", "{}", text)
+    return [template.format(*combo) for combo in itertools.product(*(g.split(",") for g in groups))]
+
+
+def cmd_try(args):
+    lines = _strip(Path(args.file).read_text())
+    base, err = _parse(lines)
+    if err:
+        sys.exit(f"PARSE ERROR in the draft {err}")
+    want = i2id(len(base.parts))
+    base_mats = [np.asarray(m) for m in decode_graph(tree_to_graph(base))] if base.parts else []
+    variants = []
+    for node in _expand(args.node):
+        if node.split(" ", 1)[0] != want:
+            node = f"{want} {node}"
+        variants += [(node, edge) for edge in _expand(args.edge)]
+
+    with collision.CollisionScene() as scene:
+        for p, m in zip(base.parts, base_mats):
+            scene.add(p.part_id, m)
+        for k, (node, edge) in enumerate(variants, 1):
+            tree, err = _parse(lines + [(0, node), (0, edge)])
+            label = f"{k:>2}. {edge}" + ("" if len(set(n for n, _ in variants)) == 1 else f"   [{node}]")
+            if err:
+                first, *rest = err.split("\n")
+                hint = rest[-1].strip() if len(rest) > 1 else ""
+                print(f"{label}\n      PARSE ERROR {first.split(': ', 1)[-1]} {hint}")
+                continue
+            graph = tree_to_graph(tree)
+            m = np.asarray(decode_graph(graph)[-1])
+            pid = tree.parts[-1].part_id
+            exclude = tree.edges[-1].parent if isinstance(tree.edges[-1], FixedEdge) else -1
+            hits = [
+                (j, collision.penetration(pid, m, base.parts[j].part_id, base_mats[j]))
+                for j in scene.check(pid, m, exclude=exclude)
+            ]
+            used, _ = _mated(graph_to_ldr(graph), len(tree.parts))
+            links = sorted({i2id(o) for (part, _), o in used.items() if part == len(tree.parts) - 1})
+            clash = "  collides " + " ".join(f"{i2id(j)}({d:.1f})" for j, d in hits) if hits else ""
+            print(f"{label}\n      {_vec(m[:3, 3])}  {_orientation(m):<13}  links {','.join(links) or '-'}{clash}")
+    if args.append:
+        node, edge = variants[args.append - 1]
+        with open(args.file, "a") as f:
+            f.write(f"{node}\n{edge}\n")
+        print(f"appended variant {args.append} to {args.file}")
+
+
+def _add_camera_args(p, views="iso,front,right,top"):
+    p.add_argument(
+        "--views",
+        default=views,
+        help="comma list of front, back, left, right, top, bottom, iso, iso-back, or AZ/EL degrees "
+        "(azimuth 0 = front, 90 = right side; elevation 90 = straight down)",
+    )
+    p.add_argument("--cols", type=int, help="tiles per row (default: a square-ish grid)")
+    p.add_argument("--size", type=int, default=512, help="tile size in pixels")
+    p.add_argument("--zoom", type=float, default=1.0, help=">1 zooms in from the fitted view")
+    p.add_argument("--target", help="center on a part id (e.g. c) or an LDU point x,y,z")
+    p.add_argument("--pan", default="0,0", help="shift the view by X,Y frame widths, e.g. 0.25,0")
+    p.add_argument("--ortho", action="store_true", help="orthographic projection")
+    p.add_argument("--no-grid", action="store_true", help="omit the 1-stud ground grid")
+    p.add_argument("--no-edges", action="store_true", help="omit part edge lines")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="command", required=True)
@@ -394,7 +571,30 @@ def main():
 
     p = sub.add_parser("part", help="connector letters of one part, with part-local positions")
     p.add_argument("query", nargs="+", help="exact name, stem, or words matching one part")
+    p.add_argument("--png", help="also render the part with every connector labelled, to this PNG")
+    p.add_argument("--sub", help="label only these subtypes or families, e.g. stud,hole or hinge")
+    p.add_argument("--color", default="light bluish grey", help="color name for --png")
+    _add_camera_args(p)
     p.set_defaults(func=cmd_part)
+
+    p = sub.add_parser("gallery", help="contact sheet: one tile per part, from names/stems and/or a search")
+    p.add_argument("out", help="output PNG")
+    p.add_argument("parts", nargs="*", help="exact names or stems (quote names with spaces)")
+    p.add_argument("--find", help="also add the top search hits for these words")
+    p.add_argument("--limit", type=int, default=15, help="search hits to add with --find")
+    p.add_argument("--color", default="light bluish grey", help="color name")
+    p.add_argument("--view", default="iso", help="one view, as for view --views")
+    p.add_argument("--ortho", action="store_true")
+    p.add_argument("--cols", type=int, default=5)
+    p.add_argument("--size", type=int, default=240)
+    p.set_defaults(func=cmd_gallery)
+
+    p = sub.add_parser("try", help="place each variant of the next part/edge; report placement, links, collisions")
+    p.add_argument("file", help="draft path text; the variants follow its last part")
+    p.add_argument("node", help="node line, id optional, e.g. 'animal horse complete | white'")
+    p.add_argument("edge", help="edge line; {x,y} alternatives expand, e.g. 'bj stud hole {a,b} open a {90,270}'")
+    p.add_argument("--append", type=int, metavar="K", help="append variant K to the draft")
+    p.set_defaults(func=cmd_try)
 
     p = sub.add_parser("check", help="parse, place, and collision-check a draft")
     p.add_argument("file", help="draft path text, or - for stdin")
@@ -402,6 +602,7 @@ def main():
     p.add_argument("-o", "--output", help="write the realized .ldr here")
     p.add_argument("--path", help="write canonical path text (comments stripped) here")
     p.add_argument("--allow-collisions", action="store_true", help="exit 0 despite collisions")
+    p.add_argument("--last", type=int, help="table rows only for the last N parts (and any colliding part)")
     p.set_defaults(func=cmd_check)
 
     p = sub.add_parser(
@@ -418,24 +619,13 @@ def main():
     p = sub.add_parser("view", help="fast WebGL preview: a grid of camera views in one PNG")
     p.add_argument("file", help="draft path text or .ldr")
     p.add_argument("out", nargs="?", help="output PNG")
-    p.add_argument(
-        "--views",
-        default="iso,front,right,top",
-        help="comma list of front, back, left, right, top, bottom, iso, iso-back, or AZ/EL degrees "
-        "(azimuth 0 = front, 90 = right side; elevation 90 = straight down)",
-    )
-    p.add_argument("--cols", type=int, help="tiles per row (default: a square-ish grid)")
-    p.add_argument("--size", type=int, default=512, help="tile size in pixels")
-    p.add_argument("--zoom", type=float, default=1.0, help=">1 zooms in from the fitted view")
-    p.add_argument("--target", help="center on a part id (e.g. c) or an LDU point x,y,z")
-    p.add_argument("--pan", default="0,0", help="shift the view by X,Y frame widths, e.g. 0.25,0")
-    p.add_argument("--ortho", action="store_true", help="orthographic projection")
+    _add_camera_args(p)
     p.add_argument("--labels", action="store_true", help="label parts with their path-text ids")
     p.add_argument("--highlight", help="comma list of part ids to emphasize; the rest are ghosted")
     p.add_argument("--hide", help="comma list of part ids to leave out")
     p.add_argument("--upto", help="show only the first N parts, or parts through id X")
-    p.add_argument("--no-grid", action="store_true", help="omit the 1-stud ground grid")
-    p.add_argument("--no-edges", action="store_true", help="omit part edge lines")
+    p.add_argument("--conns", help="comma list of part ids whose connectors to mark (grey = mated, *other part)")
+    p.add_argument("--sub", help="with --conns: mark only these subtypes or families, e.g. stud,hole")
     p.add_argument("--html", help="also write a standalone interactive viewer page")
     p.set_defaults(func=cmd_view)
 

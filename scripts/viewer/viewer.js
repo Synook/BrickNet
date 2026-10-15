@@ -55,6 +55,43 @@ export function placeLabels(picks, width, height) {
   return out;
 }
 
+// Connector markers: a dot per marker (hollow when occluded, grey when dim) and a label placed beside it,
+// clear of other labels; visible markers claim space first.
+function drawMarkers(ctx, marks, x0, y0) {
+  ctx.font = '600 11px ui-monospace, monospace';
+  const placed = [];
+  const order = [...marks].sort((a, b) => (a.hidden - b.hidden) || (a.dim - b.dim));
+  for (const m of order) {
+    const color = m.dim ? '#8c8c8c' : m.color;
+    ctx.beginPath();
+    ctx.arc(x0 + m.x, y0 + m.y, m.hidden ? 3 : 4, 0, 2 * Math.PI);
+    ctx.lineWidth = 1.5;
+    if (m.hidden) {
+      ctx.strokeStyle = color;
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = color;
+      ctx.fill();
+      ctx.strokeStyle = '#fff';
+      ctx.stroke();
+    }
+  }
+  for (const m of order) {
+    const w = ctx.measureText(m.label).width + 6, h = 14;
+    const spots = [[6, -h - 2], [6, 2], [-w - 6, -h - 2], [-w - 6, 2], [6, -h - 14], [-w - 6, 14], [-w / 2, -h - 10], [-w / 2, 8]];
+    const spot = spots.map(([dx, dy]) => [m.x + dx, m.y + dy])
+      .find(([x, y]) => placed.every(([px, py, pw]) => x + w <= px || px + pw <= x || y + h <= py || py + h <= y));
+    if (!spot) continue;
+    placed.push([spot[0], spot[1], w]);
+    ctx.globalAlpha = m.hidden ? 0.55 : 1;
+    ctx.fillStyle = 'rgba(255,255,255,0.88)';
+    ctx.fillRect(x0 + spot[0], y0 + spot[1], w, h);
+    ctx.fillStyle = m.dim ? '#666' : m.color;
+    ctx.fillText(m.label, x0 + spot[0] + 3, y0 + spot[1] + 11);
+    ctx.globalAlpha = 1;
+  }
+}
+
 export class Viewer {
   constructor(canvas) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
@@ -125,11 +162,12 @@ export class Viewer {
     });
   }
 
-  // Visibility and emphasis: hide (ids), upto (count), highlight (ids, others ghosted), edges (bool).
-  configure({ hide = [], upto = null, highlight = [], edges = true } = {}) {
-    const hidden = new Set(hide), lit = new Set(highlight);
+  // Visibility and emphasis: show (only these ids), hide (ids), upto (count), highlight (ids, others
+  // ghosted), edges (bool).
+  configure({ show = null, hide = [], upto = null, highlight = [], edges = true } = {}) {
+    const shown = show && new Set(show), hidden = new Set(hide), lit = new Set(highlight);
     for (const part of this.parts) {
-      part.visible = !hidden.has(part.id) && (upto === null || part.index < upto);
+      part.visible = (!shown || shown.has(part.id)) && !hidden.has(part.id) && (upto === null || part.index < upto);
       part.ghost = lit.size > 0 && !lit.has(part.id);
       part.obj.visible = part.visible;
       for (const m of part.meshes) {
@@ -202,7 +240,11 @@ export class Viewer {
 
   // A stud grid (20 LDU) under the visible parts, aligned to multiples of 20 LDU.
   setGrid(on) {
-    if (this.grid) this.scene.remove(this.grid);
+    if (this.grid) {
+      this.scene.remove(this.grid);
+      this.grid.geometry.dispose();
+      this.grid.material.dispose();
+    }
     this.grid = null;
     if (!on) return;
     const box = this.visibleBox();
@@ -268,14 +310,14 @@ export class Viewer {
     return out;
   }
 
-  // Render views into a cols-wide grid of size x size tiles; returns {png: data URL, views: [{name, visible}]}.
-  shoot({ views = ['iso'], cols = null, size = 512, zoom = 1, pan = [0, 0], target = null, ortho = false,
-    labels = false, grid = true, ...vis } = {}) {
-    this.configure(vis);
-    this.setGrid(grid);
-    const specs = views.map(parseView);
-    cols = cols ?? Math.ceil(Math.sqrt(specs.length));
-    const rows = Math.ceil(specs.length / cols);
+  // Render a cols-wide grid of size x size tiles; returns {png: data URL, views: [{name, visible}]}.
+  // Tiles default to one per view; explicit tiles are [{view, show: [ids], caption}], e.g. one part each.
+  // markers: [{pos: LDraw [x, y, z], label, color, dim}] are drawn on every tile, hollow where occluded.
+  shoot({ views = ['iso'], tiles = null, cols = null, size = 512, zoom = 1, pan = [0, 0], target = null,
+    ortho = false, labels = false, grid = true, markers = [], ...vis } = {}) {
+    tiles = (tiles ?? views.map((view) => ({ view }))).map((t) => ({ ...t, view: parseView(t.view ?? 'iso') }));
+    cols = cols ?? Math.ceil(Math.sqrt(tiles.length));
+    const rows = Math.ceil(tiles.length / cols);
     const W = cols * size, H = rows * size;
     this.renderer.setSize(W, H, false);
     let tgt = null;
@@ -288,8 +330,11 @@ export class Viewer {
     ctx.fillStyle = BACKGROUND;
     ctx.fillRect(0, 0, W, H);
     const results = [];
-    specs.forEach((view, k) => {
+    tiles.forEach((tile, k) => {
+      const { view } = tile;
       const col = k % cols, row = Math.floor(k / cols);
+      this.configure({ ...vis, show: tile.show ?? null });
+      this.setGrid(grid);
       const cam = this.frame(view, { zoom, pan, target: tgt, ortho });
       if (this.grid) this.grid.visible = view.el >= 0;
       const picks = this.pick(cam, size);
@@ -297,27 +342,54 @@ export class Viewer {
       this.renderer.setViewport(col * size, (rows - 1 - row) * size, size, size);
       this.renderer.setScissor(col * size, (rows - 1 - row) * size, size, size);
       this.renderer.render(this.scene, cam);
-      results.push({ view, cam: cam.clone(), picks, x0: col * size, y0: row * size });
+      const marks = markers.length ? this.projectMarkers(cam, markers, size) : [];
+      results.push({ tile, cam: cam.clone(), picks, marks, x0: col * size, y0: row * size });
     });
     ctx.drawImage(this.renderer.domElement, 0, 0);
-    for (const { view, cam, picks, x0, y0 } of results) {
+    for (const { tile, cam, picks, marks, x0, y0 } of results) {
       ctx.save();
       ctx.beginPath();
       ctx.rect(x0, y0, size, size);
       ctx.clip();
       if (labels) this.drawLabels(ctx, picks, x0, y0, size);
+      if (marks.length) drawMarkers(ctx, marks, x0, y0);
       this.drawAxes(ctx, cam, x0 + 34, y0 + size - 34);
       ctx.font = '600 14px sans-serif';
       ctx.fillStyle = '#333';
-      ctx.fillText(`${view.name}${ortho ? ' ortho' : ''}${zoom !== 1 ? ` x${zoom}` : ''}`, x0 + 8, y0 + 18);
+      const name = `${tile.view.name}${ortho ? ' ortho' : ''}${zoom !== 1 ? ` x${zoom}` : ''}`;
+      ctx.fillText(tile.caption ?? name, x0 + 8, y0 + 18, size - 16);
       ctx.restore();
       ctx.strokeStyle = '#999';
       ctx.strokeRect(x0 + 0.5, y0 + 0.5, size - 1, size - 1);
     }
     return {
       png: out.toDataURL('image/png'),
-      views: results.map(({ view, picks }) => ({ name: view.name, visible: Object.keys(picks) })),
+      views: results.map(({ tile, picks }) => ({ name: tile.caption ?? tile.view.name, visible: Object.keys(picks) })),
     };
+  }
+
+  // Tile pixel positions of markers, flagging those hidden behind visible geometry.
+  projectMarkers(cam, markers, size) {
+    const meshes = this.parts.filter((p) => p.visible && !p.ghost).flatMap((p) => p.meshes);
+    const sides = meshes.map((m) => m.material.side);
+    for (const m of meshes) m.material.side = THREE.DoubleSide; // mirrored placements flip the winding
+    const ray = new THREE.Raycaster();
+    const out = [];
+    for (const mk of markers) {
+      const p = new THREE.Vector3(mk.pos[0], -mk.pos[1], -mk.pos[2]);
+      const ndc = p.clone().project(cam);
+      if (Math.abs(ndc.x) > 1 || Math.abs(ndc.y) > 1) continue;
+      const dir = cam.isOrthographicCamera
+        ? new THREE.Vector3(0, 0, -1).transformDirection(cam.matrixWorld)
+        : p.clone().sub(cam.position).normalize();
+      const origin = cam.isOrthographicCamera ? p.clone().addScaledVector(dir, -1e5) : cam.position.clone();
+      ray.set(origin, dir);
+      const hit = ray.intersectObjects(meshes, false)[0];
+      const hidden = !!hit && hit.distance < origin.distanceTo(p) - 6; // a stud occludes its own base by 4
+      out.push({ ...mk, x: ((ndc.x + 1) / 2) * size, y: ((1 - ndc.y) / 2) * size, hidden });
+    }
+    meshes.forEach((m, i) => { m.material.side = sides[i]; });
+    return out;
   }
 
   drawLabels(ctx, picks, x0, y0, size) {
