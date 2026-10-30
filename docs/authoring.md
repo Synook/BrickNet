@@ -53,7 +53,8 @@ has approved committing and pushing straight to the gallery's `main`, with no PR
    variant K to the draft.
 6. **Finish:** a labelled `view` grid to confirm, then a beauty shot into the scratchpad, e.g.
    `render $M out/ --views 2 --samples 96 --resolution 1024x768 --yaw0 35 --pitch -20` (about 3 minutes
-   per view on 4 CPU cores; extra flags pass through to bricknet-render).
+   per view on 4 CPU cores; extra flags pass through to bricknet-render). For a turntable or a build
+   animation, see "Turntables" below.
 7. **Publish:** `publish $M ../bricknet-models --image out/model_0000.png` refuses a model with
    collisions, writes `preview.jpg` (downscaled from the render; without `--image`, a WebGL view), and
    regenerates the gallery's `README.md` index. Commit and push the gallery to `main`.
@@ -70,6 +71,7 @@ Commands at a glance:
 | `view FILE OUT [--views ...] [--labels] [--conns ids] ...` | WebGL preview grid, ~5 s |
 | `view FILE --html OUT` | standalone interactive viewer page |
 | `render FILE OUTDIR [...]` | Blender render via bricknet-render, slow |
+| `render FILE OUTDIR --turntable SECONDS [--build\|--falling] [--anim mp4,gif,frames]` | turntable or build animation, slower |
 | `publish FILE GALLERY [--image IMG]` | add a model to the gallery checkout with a preview; update its index |
 | `index GALLERY` | regenerate the gallery's `README.md` |
 
@@ -235,6 +237,16 @@ collide (up to 3.6 LDU). Crown it with `minifig crown with 5 points` on the dish
 **Windows:** `window 1x4x3 curved top with 4 panes and sill` has its origin at the bottom and no top
 studs, so carry a roof on pillars beside it; `window 1x2x3 without sill w trans-clear glass complete` has
 its origin at the top (open studs at y=0, holes at y=72).
+
+**Turntables:** `render $M out/ --turntable 8 --resolution 800x600 --samples 16 --anim mp4,gif` renders one
+full turn in 8 seconds at 24 fps (`--fps`, `--rotation SECONDS` per turn, `--counterclockwise`) as PNG frames on
+the white floor, then encodes `out/model.mp4` (H.264) and `out/model.gif` (at most 12 fps, 480 px wide) with
+ffmpeg; `frames` in `--anim` keeps the PNGs, in `out/model_frames/`. `--build` reveals the model in steps as it turns, from the bottom up
+in layers of about a dozen parts (a `.ldr` with its own `0 STEP` lines keeps them), finishing at `--build-share`
+(0.8) of the animation; `--falling` drops each step into place. Its files are named `model_build.*`. Camera flags
+(`--yaw0`, `--pitch`, ...) pass through as for stills. Budget for it: with 16 samples (clean once denoised) at
+800x600, a 2,000-part model with glass took 12-20 s a frame on 4 CPU cores, so a 12-second build at 24 fps is
+about an hour and a half; run long ones detached (`setsid nohup ... &`) rather than under a tool timeout.
 
 **Finishing:** cover exposed studs with tiles (`tile 1x4 with groove`, `tile 2x2 with groove`,
 `tile 2x4`); keep plates where something still has to attach (finials, lanterns).

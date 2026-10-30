@@ -19,7 +19,8 @@ colliders, or meshes, run the hook by hand:
 - `check [--conns ids] [--last N]`: parse errors, placements, links, collisions (exit 1 on any)
 - `try FILE NODE EDGE`: compare `{a,b}` variants of the next part before committing to one
 - `view FILE OUT.png [--labels] [--conns ids] [--views ...]`: WebGL preview, seconds; read the PNG
-- `render FILE OUTDIR`: Blender beauty shot, minutes; for final images only
+- `render FILE OUTDIR`: Blender beauty shot, minutes; for final images only. `--turntable SECONDS` (with
+  `--build`/`--falling` for a brick-by-brick build) renders an animation to MP4/GIF, hours for big models
 - `publish FILE GALLERY [--image IMG]`: add a finished model to the gallery with a preview and index
 
 Large, regular models (architecture): write a layout script and convert it with
