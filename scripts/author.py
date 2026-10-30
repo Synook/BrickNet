@@ -12,6 +12,8 @@
     python scripts/author.py view model.txt out.png --labels  # fast WebGL preview grid (iso, front, right, top)
     python scripts/author.py view model.txt out.png --views 120/20 --target c --zoom 3 --highlight c --conns c
     python scripts/author.py render model.txt out/ --views 4  # slow, photoreal Blender render
+    python scripts/author.py render model.txt out/ --turntable 8 --anim mp4,gif  # an 8 s turntable
+    python scripts/author.py render model.txt out/ --turntable 12 --falling  # built brick by brick as it turns
     python scripts/author.py publish model.txt ../bricknet-models --image out/model_0000.png  # add to the gallery
 
 Drafts may contain blank lines and '#' comments; they are stripped before parsing, and --path writes
@@ -30,8 +32,10 @@ axis. Coordinates are LDraw LDU: 20 per stud pitch, 8 per plate, 24 per brick, a
 
 import argparse
 import itertools
+import json
 import math
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -375,37 +379,144 @@ def _ldr_text(src):
     return src.read_text() if src.suffix == ".ldr" else _realize(src)[0]
 
 
+# bricknet-render's CLI has no turntable flags, though its RenderOptions takes TurntableOptions. This runs in its
+# own process, as the CLI does: it parses the CLI's flags exactly as bricknet-render would, adds the turntable, and
+# renders. RenderOptions derives settings from the raw values once (lights for a floor, say), so the values are
+# taken from parse_args before it builds them.
+_TURNTABLE = """
+import json, sys
+from bricknet_render import render as r
+
+values = {}
+options, r.RenderOptions = r.RenderOptions, lambda **kw: values.update(kw)
+r.parse_args(sys.argv[2:])
+r.RenderOptions = options
+args = options(**values, turntable=r.TurntableOptions(**json.loads(sys.argv[1])))
+r.build_scene(args)
+r.configure_output(args)
+r.save_blend(args)
+if not args.no_render:
+    r.render_turntable(args)
+"""
+
+
+def _build_steps(text, per=12):
+    """LDR text with `0 STEP` lines added so a build animation reveals the model from the bottom up: parts sorted by
+    the height of their lowest point, then swept across each layer, about `per` parts to a step. Text that already
+    has steps is returned unchanged."""
+    if re.search(r"^0 (ROT)?STEP\b", text, re.M):
+        return text
+    cat = load_catalog()
+    head, parts = [], []
+    for line in text.splitlines(keepends=True):
+        f = line.split()
+        if f and f[0] == "1":
+            t = np.array(f[2:5], float)
+            R = np.array(f[5:14], float).reshape(3, 3)
+            lo, hi = collision._bounds(cat.stem_to_id[f[14].removesuffix(".dat")])
+            w = np.array(list(itertools.product(*zip(lo, hi)))) @ R.T + t
+            key = (-round(w[:, 1].max() / 8), round(w[:, 0].mean() / 20), round(w[:, 2].mean() / 20))
+            parts.append((key, line))  # -y is up: the lowest point has the largest y
+        elif not parts:
+            head.append(line)
+    parts.sort(key=lambda p: p[0])
+    out = list(head)
+    for k, (key, line) in enumerate(parts):
+        if k and (k % per == 0 or key[0] != parts[k - 1][0][0]):
+            out.append("0 STEP\n")
+        out.append(line)
+    return "".join(out)
+
+
+def _encode(frames_dir, out, stem, fps, kinds, width):
+    """Encode the turntable's PNG frames as an H.264 MP4 and/or a GIF (at most 12 fps and 480 px wide) in `out`."""
+    frames = ["-framerate", f"{fps:g}", "-i", str(frames_dir / f"{stem}_%04d.png")]
+    ffmpeg = [shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error", "-y"]
+    made = []
+    if "mp4" in kinds:
+        made.append(out / f"{stem}.mp4")
+        even = "crop=trunc(iw/2)*2:trunc(ih/2)*2"  # yuv420p needs even dimensions
+        enc = ["-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart"]
+        subprocess.run(ffmpeg + frames + ["-vf", even] + enc + [str(made[-1])], check=True)
+    if "gif" in kinds:
+        made.append(out / f"{stem}.gif")
+        gif = (
+            f"fps={min(fps, 12):g},scale={min(width, 480)}:-1:flags=lanczos,split[a][b];"
+            "[a]palettegen=stats_mode=diff:max_colors=128[p];[b][p]paletteuse=dither=bayer:bayer_scale=3"
+        )
+        subprocess.run(ffmpeg + frames + ["-vf", gif, str(made[-1])], check=True)
+    return made
+
+
 def cmd_render(args):
     src = Path(args.file)
     out = Path(args.out_dir)
+    kinds = set(args.anim.split(",")) if args.turntable else set()
+    if kinds - {"mp4", "gif", "frames"}:
+        sys.exit(f"--anim takes mp4, gif and frames; got {args.anim}")
+    if args.turntable and args.views != 1:
+        sys.exit("--turntable and --views are mutually exclusive")
+    if kinds - {"frames"} and not shutil.which("ffmpeg"):
+        sys.exit("--anim mp4/gif needs ffmpeg on PATH (or use --anim frames)")
+    args.build = args.build or args.falling
+    if args.build and not args.turntable:
+        sys.exit("--build and --falling animate a --turntable")
     out.mkdir(parents=True, exist_ok=True)
-    if src.suffix == ".ldr":
+    if args.build:  # a copy with build steps; its name tells the animation from a plain turntable's
+        ldr_path = out / (src.stem + "_build.ldr")
+        ldr_path.write_text(_build_steps(_ldr_text(src)))
+    elif src.suffix == ".ldr":
         ldr_path = src
     else:
         ldr_path = out / (src.stem + ".ldr")
         ldr_path.write_text(_ldr_text(src))
-    cmd = [
-        sys.executable,
-        "-m",
-        "bricknet_render",
+    stem = ldr_path.stem
+    frames_dir = out / f"{stem}_frames"  # a turntable's frames would share the stills' names (model_0000.png)
+    if args.turntable:
+        shutil.rmtree(frames_dir, ignore_errors=True)  # stale frames past the new last one would be encoded too
+    flags = [
         str(ldr_path),
-        str(out),
+        str(frames_dir if args.turntable else out),
         "--device",
         args.device,
         "--samples",
         str(args.samples),
         "--resolution",
         args.resolution,
-        "--views",
-        str(args.views),
     ]
+    if args.turntable:
+        spec = {
+            "format": "png8",
+            "fps": args.fps,
+            "duration": args.turntable,
+            "rotation_period": args.rotation or args.turntable,
+            "clockwise": not args.counterclockwise,
+            "build_steps": args.build,
+            "falling": args.falling,
+            "build_duration_ratio": args.build_share,
+        }
+        if not {"--background-mode", "--transparent"} & set(args.extra):
+            flags += ["--background-mode", "floor"]  # frames on the white floor, as the stills are
+        cmd = [sys.executable, "-c", _TURNTABLE, json.dumps(spec)] + flags
+    else:
+        cmd = [sys.executable, "-m", "bricknet_render"] + flags + ["--views", str(args.views)]
     with tempfile.TemporaryFile("w+") as log:
         rc = subprocess.call(cmd + args.extra, stdout=log, stderr=subprocess.STDOUT)
         if rc:
             log.seek(0)
             sys.exit(log.read()[-3000:] + f"\nbricknet-render exited {rc}")
-    for png in sorted(out.glob("*.png")):
-        print(png)
+    if not args.turntable:
+        for png in sorted(out.glob("*.png")):
+            print(png)
+        return
+    width = int(args.resolution.split("x")[0])
+    made = _encode(frames_dir, out, stem, args.fps, kinds, width) if kinds - {"frames"} else []
+    if "frames" in kinds:
+        print(f"{frames_dir}/ ({len(list(frames_dir.glob('*.png')))} frames)")
+    else:
+        shutil.rmtree(frames_dir)
+    for path in made:
+        print(path)
 
 
 def _ids(arg):
@@ -701,6 +812,18 @@ def main():
     p.add_argument("--samples", type=int, default=32)
     p.add_argument("--resolution", default="512x512")
     p.add_argument("--device", default="CPU", choices=["CPU", "GPU"])
+    p.add_argument("--turntable", type=float, metavar="SECONDS", help="render a turntable animation this long")
+    p.add_argument("--fps", type=float, default=24, help="turntable frame rate (default 24)")
+    p.add_argument("--rotation", type=float, metavar="SECONDS", help="seconds per turn (default: the whole animation)")
+    p.add_argument("--counterclockwise", action="store_true", help="turn the other way")
+    p.add_argument(
+        "--build",
+        action="store_true",
+        help="reveal the model step by step as it turns (bottom up, unless the .ldr has its own 0 STEP lines)",
+    )
+    p.add_argument("--falling", action="store_true", help="--build, with each step dropping into place")
+    p.add_argument("--build-share", type=float, default=0.8, help="share of the animation spent building (0.8)")
+    p.add_argument("--anim", default="mp4", help="comma list of mp4, gif, frames (keep the PNGs); default mp4")
     p.set_defaults(func=cmd_render)
 
     p = sub.add_parser("view", help="fast WebGL preview: a grid of camera views in one PNG")
